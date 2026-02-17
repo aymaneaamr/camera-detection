@@ -154,7 +154,7 @@ st.markdown("""
 Cette application détecte et compte automatiquement les pièces :
 - **Détection par couleur** (rouge, bleu, vert, jaune)
 - **Classification par taille** (P, M, G, TG)
-- **Fonctionne directement dans votre navigateur**
+- **Fonctionne sur téléphone et PC**
 """)
 
 # Sidebar pour les paramètres
@@ -193,67 +193,116 @@ with st.sidebar:
 if source == "📸 Prendre une photo":
     st.subheader("📸 Prenez une photo avec votre caméra")
     
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        img_file = st.camera_input("Cliquez pour prendre une photo", key="camera")
+    # Instructions pour le téléphone
+    st.info("""
+    **📱 Sur téléphone :**
+    1. Appuyez sur le bouton ci-dessous
+    2. Autorisez l'accès à la caméra si demandé
+    3. Prenez la photo
+    """)
+    
+    # Widget caméra avec paramètres adaptés au mobile
+    img_file = st.camera_input(
+        "Prendre une photo",
+        key="camera_phone",
+        help="Appuyez pour prendre une photo"
+    )
     
     if img_file is not None:
         with st.spinner("🔍 Analyse en cours..."):
-            # Lire l'image
-            bytes_data = img_file.getvalue()
-            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            try:
+                # Lire l'image avec PIL d'abord (plus compatible)
+                pil_image = Image.open(img_file)
+                
+                # Convertir en numpy array
+                frame = np.array(pil_image)
+                
+                # Convertir RGB -> BGR pour OpenCV si nécessaire
+                if len(frame.shape) == 3 and frame.shape[2] == 3:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Redimensionner si trop grande pour éviter les lenteurs
+                height, width = frame.shape[:2]
+                if width > 800:
+                    scale = 800 / width
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    frame = cv2.resize(frame, (new_width, new_height))
+                
+                # Traitement
+                resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
+                st.session_state.frame_count += 1
+                
+                # Affichage des résultats
+                st.success(f"✅ **{total_actuel} pièces** détectées !")
+                
+                # Afficher les images
+                col_img1, col_img2 = st.columns(2)
+                with col_img1:
+                    # Reconvertir BGR -> RGB pour affichage
+                    display_original = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    st.image(display_original, caption="📸 Photo originale", use_column_width=True)
+                with col_img2:
+                    display_result = cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB)
+                    st.image(display_result, caption=f"🎯 {total_actuel} pièces", use_column_width=True)
+                
+                # Statistiques détaillées
+                st.subheader("📊 Détail par couleur et taille")
+                
+                # Métriques principales
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.metric("Total pièces", total_actuel)
+                with col_m2:
+                    st.metric("Couleurs diff.", len([c for c in stats_couleur.values() if c > 0]))
+                with col_m3:
+                    st.metric("Frame", st.session_state.frame_count)
+                
+                # Tableau des couleurs adapté au mobile
+                st.write("**🎨 Répartition par couleur :**")
+                
+                # Version responsive pour mobile
+                if st.session_state.get('mobile', False):
+                    # Affichage vertical pour mobile
+                    for couleur in ['rouge', 'bleu', 'vert', 'jaune', '?']:
+                        count = stats_couleur.get(couleur, 0)
+                        emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', '?': '⚪'}
+                        st.write(f"{emoji.get(couleur, '⚪')} {couleur}: {count}")
+                else:
+                    # Affichage horizontal pour PC
+                    cols = st.columns(5)
+                    couleurs_list = ['rouge', 'bleu', 'vert', 'jaune', 'autre']
+                    color_emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', 'autre': '⚪'}
+                    
+                    for i, couleur in enumerate(couleurs_list):
+                        with cols[i]:
+                            count = stats_couleur.get(couleur if couleur != 'autre' else '?', 0)
+                            st.metric(f"{color_emoji[couleur]}", count)
+                
+                # Tableau des tailles adapté au mobile
+                st.write("**📏 Répartition par taille :**")
+                
+                if st.session_state.get('mobile', False):
+                    # Affichage vertical pour mobile
+                    for taille in ['P', 'M', 'G', 'TG']:
+                        count = stats_taille.get(taille, 0)
+                        st.write(f"Taille {taille}: {count}")
+                else:
+                    cols = st.columns(4)
+                    tailles_list = ['P', 'M', 'G', 'TG']
+                    for i, taille in enumerate(tailles_list):
+                        with cols[i]:
+                            count = stats_taille.get(taille, 0)
+                            st.metric(f"{taille}", count)
+                
+                # Détail des pièces
+                with st.expander("🔍 Voir le détail de chaque pièce"):
+                    for i, piece in enumerate(pieces, 1):
+                        st.write(f"Pièce #{i} : {piece['couleur']} - {piece['taille']} (aire: {piece['aire']:.0f} px)")
             
-            # Traitement
-            resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-            st.session_state.frame_count += 1
-            
-            # Affichage des résultats
-            st.success(f"✅ **{total_actuel} pièces** détectées !")
-            
-            col_img1, col_img2 = st.columns(2)
-            with col_img1:
-                st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
-                        caption="📸 Photo originale", use_column_width=True)
-            with col_img2:
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                        caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
-            
-            # Statistiques détaillées
-            st.subheader("📊 Détail par couleur et taille")
-            
-            # Métriques principales
-            col_m1, col_m2, col_m3 = st.columns(3)
-            with col_m1:
-                st.metric("Total pièces", total_actuel)
-            with col_m2:
-                st.metric("Couleurs différentes", len([c for c in stats_couleur.values() if c > 0]))
-            with col_m3:
-                st.metric("Frame", st.session_state.frame_count)
-            
-            # Tableau des couleurs
-            st.write("**🎨 Répartition par couleur :**")
-            cols = st.columns(5)
-            couleurs_list = ['rouge', 'bleu', 'vert', 'jaune', 'autre']
-            color_emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', 'autre': '⚪'}
-            
-            for i, couleur in enumerate(couleurs_list):
-                with cols[i]:
-                    count = stats_couleur.get(couleur if couleur != 'autre' else '?', 0)
-                    st.metric(f"{color_emoji[couleur]} {couleur}", count)
-            
-            # Tableau des tailles
-            st.write("**📏 Répartition par taille :**")
-            cols = st.columns(4)
-            tailles_list = ['P', 'M', 'G', 'TG']
-            for i, taille in enumerate(tailles_list):
-                with cols[i]:
-                    count = stats_taille.get(taille, 0)
-                    st.metric(f"Taille {taille}", count)
-            
-            # Liste détaillée des pièces
-            with st.expander("🔍 Voir le détail de chaque pièce"):
-                for i, piece in enumerate(pieces, 1):
-                    st.write(f"Pièce #{i} : {piece['couleur']} - {piece['taille']} (aire: {piece['aire']:.0f} px)")
+            except Exception as e:
+                st.error(f"Erreur lors de l'analyse: {str(e)}")
+                st.info("Essayez de prendre une autre photo avec un meilleur éclairage")
 
 elif source == "🖼️ Uploader une image":
     st.subheader("🖼️ Analyse d'image")
@@ -262,42 +311,54 @@ elif source == "🖼️ Uploader une image":
     
     if uploaded_file:
         with st.spinner("🔍 Analyse en cours..."):
-            # Lire l'image
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            try:
+                # Lire l'image
+                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                
+                # Redimensionner si trop grande
+                height, width = frame.shape[:2]
+                if width > 800:
+                    scale = 800 / width
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    frame = cv2.resize(frame, (new_width, new_height))
+                
+                # Traitement
+                resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
+                st.session_state.frame_count += 1
+                
+                # Affichage
+                st.success(f"✅ **{total_actuel} pièces** détectées !")
+                
+                col_img1, col_img2 = st.columns(2)
+                with col_img1:
+                    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                            caption="🖼️ Originale", use_column_width=True)
+                with col_img2:
+                    st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                            caption=f"🎯 {total_actuel} pièces", use_column_width=True)
+                
+                # Statistiques simplifiées pour mobile
+                st.subheader("📊 Résultats")
+                
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    st.write("**Par couleur :**")
+                    for couleur in ['rouge', 'bleu', 'vert', 'jaune', '?']:
+                        count = stats_couleur.get(couleur, 0)
+                        if count > 0:
+                            st.write(f"- {couleur}: {count}")
+                
+                with col_s2:
+                    st.write("**Par taille :**")
+                    for taille in ['P', 'M', 'G', 'TG']:
+                        count = stats_taille.get(taille, 0)
+                        if count > 0:
+                            st.write(f"- {taille}: {count}")
             
-            # Traitement
-            resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-            st.session_state.frame_count += 1
-            
-            # Affichage
-            st.success(f"✅ **{total_actuel} pièces** détectées !")
-            
-            col_img1, col_img2 = st.columns(2)
-            with col_img1:
-                st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
-                        caption="🖼️ Image originale", use_column_width=True)
-            with col_img2:
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                        caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
-            
-            # Statistiques
-            st.subheader("📊 Résultats")
-            
-            col_s1, col_s2 = st.columns(2)
-            with col_s1:
-                st.write("**Par couleur :**")
-                for couleur in ['rouge', 'bleu', 'vert', 'jaune', '?']:
-                    count = stats_couleur.get(couleur, 0)
-                    if count > 0:
-                        st.write(f"- {couleur}: {count}")
-            
-            with col_s2:
-                st.write("**Par taille :**")
-                for taille in ['P', 'M', 'G', 'TG']:
-                    count = stats_taille.get(taille, 0)
-                    if count > 0:
-                        st.write(f"- {taille}: {count}")
+            except Exception as e:
+                st.error(f"Erreur: {str(e)}")
 
 else:  # Mode démo
     st.subheader("🧪 Mode démo")
@@ -305,44 +366,52 @@ else:  # Mode démo
     
     if st.button("🎲 Générer une image de test"):
         with st.spinner("🔍 Analyse..."):
-            # Créer une image de test avec des formes
+            # Créer une image de test
             test_img = np.zeros((480, 640, 3), dtype=np.uint8)
-            test_img.fill(255)  # Fond blanc
+            test_img.fill(255)
             
-            # Dessiner des pièces de test
+            # Dessiner des pièces
             cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)  # Rouge
             cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)  # Bleu
             cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)  # Vert
             cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)  # Jaune
-            cv2.circle(test_img, (450, 350), 60, (100, 100, 100), -1)  # Gris (non détecté)
             
             # Traitement
             resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(test_img)
-            st.session_state.frame_count += 1
             
             # Affichage
-            st.success(f"✅ **{total_actuel} pièces** détectées en mode démo !")
+            st.success(f"✅ **{total_actuel} pièces** détectées !")
             
             col_img1, col_img2 = st.columns(2)
             with col_img1:
                 st.image(cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB), 
-                        caption="🧪 Image de test", use_column_width=True)
+                        caption="🧪 Test", use_column_width=True)
             with col_img2:
                 st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                        caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
-            
-            # Stats
-            st.write("**Résultats :**")
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                st.write("Couleurs :", dict(stats_couleur))
-            with col_d2:
-                st.write("Tailles :", dict(stats_taille))
+                        caption=f"🎯 {total_actuel}", use_column_width=True)
+
+# Détection mobile (approximative)
+import streamlit as st
+if 'mobile' not in st.session_state:
+    # Vérifier si l'écran est petit (probablement mobile)
+    try:
+        import streamlit.components.v1 as components
+        mobile_script = """
+        <script>
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            window.parent.postMessage({isMobile: isMobile}, '*');
+        </script>
+        """
+        components.html(mobile_script, height=0)
+        st.session_state.mobile = False  # Par défaut
+    except:
+        st.session_state.mobile = False
 
 # Pied de page
 st.markdown("---")
 st.caption("""
-🧩 Compteur de Pièces v2.0 - Compatible Streamlit Cloud
-• Utilise `st.camera_input()` pour la caméra navigateur
-• Pas besoin d'OpenCV côté serveur pour la capture
+🧩 Compteur de Pièces v2.1 - Optimisé mobile
+• Compatible iPhone et Android
+• Redimensionnement automatique
+• Interface adaptative
 """)
