@@ -4,38 +4,13 @@ import numpy as np
 from collections import defaultdict
 from PIL import Image
 import time
-import base64
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
-import av
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Compteur de Pièces - Live",
-    page_icon="🎥",
+    page_title="Compteur de Pièces",
+    page_icon="🧩",
     layout="wide"
 )
-
-# Vérifier si streamlit-webrtc est installé
-try:
-    from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
-    import av
-    webrtc_available = True
-except ImportError:
-    webrtc_available = False
-    st.error("""
-    ❌ streamlit-webrtc n'est pas installé.
-    
-    Pour installer : 
-    ```bash
-    pip install streamlit-webrtc av
-    ```
-    
-    Ou ajoutez au requirements.txt :
-    ```
-    streamlit-webrtc
-    av
-    ```
-    """)
 
 class CompteurPieces:
     def __init__(self):
@@ -172,42 +147,31 @@ if 'compteur' not in st.session_state:
     st.session_state.compteur = CompteurPieces()
 if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
-if 'stats_couleur' not in st.session_state:
-    st.session_state.stats_couleur = defaultdict(int)
-if 'stats_taille' not in st.session_state:
-    st.session_state.stats_taille = defaultdict(int)
-if 'total_actuel' not in st.session_state:
-    st.session_state.total_actuel = 0
 
 # Interface Streamlit
-st.title("🎥 Compteur de Pièces - Temps Réel")
+st.title("🧩 Compteur de Pièces")
 st.markdown("""
-Cette application détecte et compte automatiquement les pièces **en direct** :
-- **Flux vidéo continu** comme dans Visual Studio
+Cette application détecte et compte automatiquement les pièces :
 - **Détection par couleur** (rouge, bleu, vert, jaune)
 - **Classification par taille** (P, M, G, TG)
-- **Fonctionne dans votre navigateur** sans installation
+- **Fonctionne directement dans votre navigateur**
 """)
 
 # Sidebar pour les paramètres
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    st.markdown("---")
-    st.header("📊 Statistiques en direct")
+    source = st.radio(
+        "Source",
+        ["📸 Prendre une photo", "🖼️ Uploader une image", "🧪 Mode démo"]
+    )
     
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        st.metric("Pièces détectées", st.session_state.total_actuel)
-    with col_s2:
-        st.metric("Frames", st.session_state.frame_count)
+    st.markdown("---")
+    st.header("📊 Statistiques")
     
     if st.button("🔄 Réinitialiser compteurs"):
         st.session_state.compteur.reset_compteur()
         st.session_state.frame_count = 0
-        st.session_state.stats_couleur = defaultdict(int)
-        st.session_state.stats_taille = defaultdict(int)
-        st.session_state.total_actuel = 0
         st.rerun()
     
     st.markdown("---")
@@ -226,125 +190,159 @@ with st.sidebar:
     """)
 
 # Zone principale
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("📹 Flux vidéo en direct")
+if source == "📸 Prendre une photo":
+    st.subheader("📸 Prenez une photo avec votre caméra")
     
-    # Option 1: Avec streamlit-webrtc (meilleure performance)
-    if webrtc_available:
-        class VideoProcessor(VideoProcessorBase):
-            def __init__(self):
-                self.frame_count = 0
-            
-            def recv(self, frame):
-                img = frame.to_ndarray(format="bgr24")
-                
-                # Traitement
-                resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(img)
-                
-                # Mise à jour des stats dans la session
-                st.session_state.frame_count += 1
-                st.session_state.stats_couleur = stats_couleur
-                st.session_state.stats_taille = stats_taille
-                st.session_state.total_actuel = total_actuel
-                
-                # Ajout d'information sur l'image
-                h, w = resultat.shape[:2]
-                cv2.putText(resultat, f"TOTAL: {total_actuel}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.putText(resultat, f"Frame: {st.session_state.frame_count}", (w-150, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                
-                return av.VideoFrame.from_ndarray(resultat, format="bgr24")
-        
-        ctx = webrtc_streamer(
-            key="object-detection",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=VideoProcessor,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True,
-        )
-        
-        if not ctx.state.playing:
-            st.info("👆 Cliquez sur 'START' pour activer la caméra")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        img_file = st.camera_input("Cliquez pour prendre une photo", key="camera")
     
-    else:
-        st.warning("""
-        ⚠️ streamlit-webrtc n'est pas installé.
-        
-        Pour le flux vidéo en direct, installez :
-        ```bash
-        pip install streamlit-webrtc av
-        ```
-        
-        En attendant, utilisez le mode photo ci-dessous :
-        """)
-        
-        # Fallback sur st.camera_input
-        img_file = st.camera_input("Prenez une photo")
-        if img_file:
+    if img_file is not None:
+        with st.spinner("🔍 Analyse en cours..."):
+            # Lire l'image
             bytes_data = img_file.getvalue()
             frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            
+            # Traitement
             resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-            st.session_state.total_actuel = total_actuel
-            st.session_state.stats_couleur = stats_couleur
-            st.session_state.stats_taille = stats_taille
-            st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB))
+            st.session_state.frame_count += 1
+            
+            # Affichage des résultats
+            st.success(f"✅ **{total_actuel} pièces** détectées !")
+            
+            col_img1, col_img2 = st.columns(2)
+            with col_img1:
+                st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                        caption="📸 Photo originale", use_column_width=True)
+            with col_img2:
+                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                        caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
+            
+            # Statistiques détaillées
+            st.subheader("📊 Détail par couleur et taille")
+            
+            # Métriques principales
+            col_m1, col_m2, col_m3 = st.columns(3)
+            with col_m1:
+                st.metric("Total pièces", total_actuel)
+            with col_m2:
+                st.metric("Couleurs différentes", len([c for c in stats_couleur.values() if c > 0]))
+            with col_m3:
+                st.metric("Frame", st.session_state.frame_count)
+            
+            # Tableau des couleurs
+            st.write("**🎨 Répartition par couleur :**")
+            cols = st.columns(5)
+            couleurs_list = ['rouge', 'bleu', 'vert', 'jaune', 'autre']
+            color_emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', 'autre': '⚪'}
+            
+            for i, couleur in enumerate(couleurs_list):
+                with cols[i]:
+                    count = stats_couleur.get(couleur if couleur != 'autre' else '?', 0)
+                    st.metric(f"{color_emoji[couleur]} {couleur}", count)
+            
+            # Tableau des tailles
+            st.write("**📏 Répartition par taille :**")
+            cols = st.columns(4)
+            tailles_list = ['P', 'M', 'G', 'TG']
+            for i, taille in enumerate(tailles_list):
+                with cols[i]:
+                    count = stats_taille.get(taille, 0)
+                    st.metric(f"Taille {taille}", count)
+            
+            # Liste détaillée des pièces
+            with st.expander("🔍 Voir le détail de chaque pièce"):
+                for i, piece in enumerate(pieces, 1):
+                    st.write(f"Pièce #{i} : {piece['couleur']} - {piece['taille']} (aire: {piece['aire']:.0f} px)")
 
-with col2:
-    st.subheader("📊 Analyse en direct")
+elif source == "🖼️ Uploader une image":
+    st.subheader("🖼️ Analyse d'image")
     
-    # Créer des placeholders pour les stats dynamiques
-    stats_container = st.container()
+    uploaded_file = st.file_uploader("Choisissez une image", type=['jpg', 'jpeg', 'png'])
     
-    with stats_container:
-        # Métrique principale
-        st.metric("Pièces dans l'image", st.session_state.total_actuel)
-        
-        st.markdown("---")
-        
-        # Stats par couleur
-        st.write("**🎨 Par couleur :**")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.write(f"🔴 Rouge: {st.session_state.stats_couleur.get('rouge', 0)}")
-            st.write(f"🔵 Bleu: {st.session_state.stats_couleur.get('bleu', 0)}")
-            st.write(f"🟢 Vert: {st.session_state.stats_couleur.get('vert', 0)}")
-        with col_c2:
-            st.write(f"🟡 Jaune: {st.session_state.stats_couleur.get('jaune', 0)}")
-            st.write(f"⚪ Autre: {st.session_state.stats_couleur.get('?', 0)}")
-        
-        st.markdown("---")
-        
-        # Stats par taille
-        st.write("**📏 Par taille :**")
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            st.write(f"P: {st.session_state.stats_taille.get('P', 0)}")
-            st.write(f"M: {st.session_state.stats_taille.get('M', 0)}")
-        with col_t2:
-            st.write(f"G: {st.session_state.stats_taille.get('G', 0)}")
-            st.write(f"TG: {st.session_state.stats_taille.get('TG', 0)}")
-        
-        st.markdown("---")
-        
-        # Informations
-        st.info(f"🔄 Frames traitées: {st.session_state.frame_count}")
-        
-        if st.session_state.frame_count > 0:
-            fps = st.session_state.frame_count / max(1, (time.time() - st.session_state.get('start_time', time.time())))
-            st.write(f"⚡ FPS: {fps:.1f}")
+    if uploaded_file:
+        with st.spinner("🔍 Analyse en cours..."):
+            # Lire l'image
+            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+            frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            
+            # Traitement
+            resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
+            st.session_state.frame_count += 1
+            
+            # Affichage
+            st.success(f"✅ **{total_actuel} pièces** détectées !")
+            
+            col_img1, col_img2 = st.columns(2)
+            with col_img1:
+                st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                        caption="🖼️ Image originale", use_column_width=True)
+            with col_img2:
+                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                        caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
+            
+            # Statistiques
+            st.subheader("📊 Résultats")
+            
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                st.write("**Par couleur :**")
+                for couleur in ['rouge', 'bleu', 'vert', 'jaune', '?']:
+                    count = stats_couleur.get(couleur, 0)
+                    if count > 0:
+                        st.write(f"- {couleur}: {count}")
+            
+            with col_s2:
+                st.write("**Par taille :**")
+                for taille in ['P', 'M', 'G', 'TG']:
+                    count = stats_taille.get(taille, 0)
+                    if count > 0:
+                        st.write(f"- {taille}: {count}")
 
-# Initialiser le temps de démarrage
-if 'start_time' not in st.session_state:
-    st.session_state.start_time = time.time()
+else:  # Mode démo
+    st.subheader("🧪 Mode démo")
+    st.info("Génération d'images de test pour démonstration")
+    
+    if st.button("🎲 Générer une image de test"):
+        with st.spinner("🔍 Analyse..."):
+            # Créer une image de test avec des formes
+            test_img = np.zeros((480, 640, 3), dtype=np.uint8)
+            test_img.fill(255)  # Fond blanc
+            
+            # Dessiner des pièces de test
+            cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)  # Rouge
+            cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)  # Bleu
+            cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)  # Vert
+            cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)  # Jaune
+            cv2.circle(test_img, (450, 350), 60, (100, 100, 100), -1)  # Gris (non détecté)
+            
+            # Traitement
+            resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(test_img)
+            st.session_state.frame_count += 1
+            
+            # Affichage
+            st.success(f"✅ **{total_actuel} pièces** détectées en mode démo !")
+            
+            col_img1, col_img2 = st.columns(2)
+            with col_img1:
+                st.image(cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB), 
+                        caption="🧪 Image de test", use_column_width=True)
+            with col_img2:
+                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                        caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
+            
+            # Stats
+            st.write("**Résultats :**")
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.write("Couleurs :", dict(stats_couleur))
+            with col_d2:
+                st.write("Tailles :", dict(stats_taille))
 
 # Pied de page
 st.markdown("---")
 st.caption("""
-🎥 Compteur de Pièces v3.0 - Flux vidéo en direct
-• Utilise WebRTC pour la capture vidéo temps réel
-• Compatible Streamlit Cloud
-• Même expérience que Visual Studio
+🧩 Compteur de Pièces v2.0 - Compatible Streamlit Cloud
+• Utilise `st.camera_input()` pour la caméra navigateur
+• Pas besoin d'OpenCV côté serveur pour la capture
 """)
