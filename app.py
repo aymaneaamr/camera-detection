@@ -4,24 +4,17 @@ import numpy as np
 from collections import defaultdict
 from PIL import Image
 import time
-import os
-from pathlib import Path
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Compteur de Pièces",
-    page_icon="🧩",
-    layout="wide",
-    initial_sidebar_state="auto"
+    page_title="Compteur de Pièces - Téléphone",
+    page_icon="📱",
+    layout="centered"  # Centré pour mobile
 )
 
-# ============================================
-# 1. DÉFINITION DE LA CLASSE D'ABORD
-# ============================================
 class CompteurPieces:
     def __init__(self):
         """Initialise le compteur de pièces"""
-        # Couleurs HSV
         self.couleurs = {
             'rouge': {
                 'lower1': np.array([0, 100, 100]), 'upper1': np.array([10, 255, 255]),
@@ -42,12 +35,11 @@ class CompteurPieces:
             }
         }
         
-        # Seuils de taille
         self.seuils_taille = {
-            'P': (0, 500),      # Petite
-            'M': (500, 2000),    # Moyenne
-            'G': (2000, 5000),   # Grande
-            'TG': (5000, float('inf'))  # Très Grande
+            'P': (0, 500),
+            'M': (500, 2000),
+            'G': (2000, 5000),
+            'TG': (5000, float('inf'))
         }
         
         self.reset_compteur()
@@ -100,7 +92,6 @@ class CompteurPieces:
         resultat = frame.copy()
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
-        # Détection des contours
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         edges = cv2.Canny(blur, 50, 150)
@@ -138,7 +129,6 @@ class CompteurPieces:
             stats_couleur_actuelles[couleur_nom] += 1
             stats_taille_actuelles[taille_nom] += 1
             
-            # Dessiner la pièce
             cv2.rectangle(resultat, (x, y), (x+w, y+h), couleur_bbox, 2)
             cv2.circle(resultat, centre, 3, (255, 255, 255), -1)
             cv2.putText(resultat, f"#{len(pieces_actuelles)}", (x+5, y+20),
@@ -148,207 +138,151 @@ class CompteurPieces:
         
         return resultat, pieces_actuelles, stats_couleur_actuelles, stats_taille_actuelles, total_actuel
 
-# ============================================
-# 2. DÉTECTION DU TYPE D'APPAREIL (simplifiée)
-# ============================================
-def detecter_appareil():
-    """Détecte si l'utilisateur est sur mobile (version simplifiée)"""
-    try:
-        # Version simplifiée sans JavaScript
-        # On utilise la largeur de l'écran via les métadonnées
-        return False  # Par défaut, on suppose PC
-    except:
-        return False
-
-# ============================================
-# 3. INITIALISATION DES ÉTATS DE SESSION
-# ============================================
+# Initialisation
 if 'compteur' not in st.session_state:
-    st.session_state.compteur = CompteurPieces()  # Maintenant la classe est définie
+    st.session_state.compteur = CompteurPieces()
 if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
-if 'is_mobile' not in st.session_state:
-    st.session_state.is_mobile = False  # On désactive la détection mobile pour l'instant
-if 'camera_active' not in st.session_state:
-    st.session_state.camera_active = False
-if 'photos_prises' not in st.session_state:
-    st.session_state.photos_prises = []
 
 # ============================================
-# 4. INTERFACE PRINCIPALE
+# INTERFACE SIMPLIFIÉE POUR TÉLÉPHONE
 # ============================================
-st.title("🧩 Compteur de Pièces")
+st.title("📱 Compteur de Pièces")
 
-# Afficher le mode actuel
-device_emoji = "📱" if st.session_state.is_mobile else "💻"
-st.caption(f"{device_emoji} Mode : {'Téléphone' if st.session_state.is_mobile else 'PC'}")
+# Grand bouton bien visible pour ouvrir la caméra
+st.markdown("""
+<style>
+    .stCameraInput {
+        border: 3px solid #4CAF50;
+        border-radius: 15px;
+        padding: 10px;
+    }
+    .stCameraInput button {
+        background-color: #4CAF50;
+        color: white;
+        font-size: 20px;
+        padding: 20px;
+        border-radius: 15px;
+        width: 100%;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Sidebar simplifiée pour le téléphone
-with st.sidebar:
-    st.header("⚙️ Configuration")
-    
-    # Options adaptées au téléphone (simplifiées)
-    source = st.radio(
-        "Source",
-        ["📸 Appareil photo", "🖼️ Galerie", "🧪 Mode démo"],
-        horizontal=True  # Horizontal pour mobile
-    )
-    
-    st.markdown("---")
-    
-    if st.button("🔄 Réinitialiser"):
-        st.session_state.compteur.reset_compteur()
-        st.session_state.frame_count = 0
-        st.rerun()
-    
-    st.markdown("---")
-    
-    # Légende simplifiée
-    with st.expander("📝 Légende"):
-        st.markdown("""
-        - 🔴 Rouge
-        - 🔵 Bleu  
-        - 🟢 Vert
-        - 🟡 Jaune
-        - **P** < 500 px
-        - **M** 500-2000 px
-        - **G** 2000-5000 px
-        - **TG** > 5000 px
-        """)
+# Option 1: Grand bouton caméra
+st.subheader("📸 Étape 1: Appuyez pour ouvrir la caméra")
 
-# ============================================
-# 5. TRAITEMENT SELON LA SOURCE
-# ============================================
-if source == "📸 Appareil photo":
-    st.subheader("📸 Prenez une photo")
-    
-    # Widget caméra
+# Créer un conteneur pour la caméra
+camera_container = st.container()
+
+with camera_container:
+    # Le widget camera_input avec un key unique qui change à chaque rafraîchissement
     img_file = st.camera_input(
-        "Appuyez pour prendre une photo",
-        key=f"camera_{time.time()}",
-        help="Utilisez l'appareil photo de votre téléphone"
+        "📱 Appuyez ici pour utiliser l'appareil photo",
+        key=f"camera_{int(time.time())}",
+        help="Appuyez pour prendre une photo"
     )
-    
-    if img_file is not None:
-        with st.spinner("🔍 Analyse en cours..."):
-            try:
-                # Lire l'image
-                bytes_data = img_file.getvalue()
-                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                
-                if frame is not None:
-                    # Redimensionner pour le téléphone
-                    height, width = frame.shape[:2]
-                    if width > 400:
-                        scale = 400 / width
-                        new_width = int(width * scale)
-                        new_height = int(height * scale)
-                        frame = cv2.resize(frame, (new_width, new_height))
-                    
-                    # Traitement
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-                    st.session_state.frame_count += 1
-                    
-                    # Sauvegarder dans l'historique
-                    st.session_state.photos_prises.append({
-                        'time': time.time(),
-                        'total': total_actuel
-                    })
-                    
-                    # Afficher le résultat
-                    st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                            caption=f"🎯 {total_actuel} pièces", use_column_width=True)
-                    
-                    # Statistiques simples
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Total", total_actuel)
-                    with col2:
-                        st.metric("Frame", st.session_state.frame_count)
-                    
-                    # Détail des couleurs
-                    st.write("**Couleurs détectées:**")
-                    cols = st.columns(4)
-                    couleurs = ['rouge', 'bleu', 'vert', 'jaune']
-                    emojis = ['🔴', '🔵', '🟢', '🟡']
-                    for i, couleur in enumerate(couleurs):
-                        with cols[i]:
-                            count = stats_couleur.get(couleur, 0)
-                            st.metric(emojis[i], count)
-            
-            except Exception as e:
-                st.error(f"Erreur lors de l'analyse: {str(e)}")
 
-elif source == "🖼️ Galerie":
-    st.subheader("🖼️ Choisir une photo")
+# Option 2: Bouton d'aide si la caméra ne s'ouvre pas
+with st.expander("🔧 La caméra ne s'ouvre pas ?"):
+    st.markdown("""
+    **Sur iPhone:**
+    1. Allez dans Réglages > Safari
+    2. Descendez jusqu'à "Caméra"
+    3. Sélectionnez "Autoriser"
     
-    uploaded_file = st.file_uploader(
-        "Sélectionner une photo",
-        type=['jpg', 'jpeg', 'png'],
-        help="Choisissez une photo dans votre galerie"
-    )
+    **Sur Android:**
+    1. Allez dans Paramètres > Applications > Chrome
+    2. Appuyez sur "Autorisations"
+    3. Activez "Appareil photo"
     
-    if uploaded_file:
-        with st.spinner("🔍 Analyse en cours..."):
-            try:
+    **Puis rafraîchissez la page** 🔄
+    """)
+
+# Traitement de l'image
+if img_file is not None:
+    with st.spinner("🔍 Analyse en cours..."):
+        try:
+            # Lire l'image
+            bytes_data = img_file.getvalue()
+            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            
+            if frame is not None:
+                # Redimensionner pour le téléphone
+                height, width = frame.shape[:2]
+                if width > 400:
+                    scale = 400 / width
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    frame = cv2.resize(frame, (new_width, new_height))
+                
+                # Traitement
+                resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
+                st.session_state.frame_count += 1
+                
+                # Afficher le résultat
+                st.subheader(f"✅ Résultat: {total_actuel} pièces")
+                
+                # Image résultat
+                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                        caption=f"🎯 {total_actuel} pièces détectées", 
+                        use_column_width=True)
+                
+                # Statistiques en grille
+                st.subheader("📊 Détails")
+                
+                # Par couleur
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("🔴 Rouge", stats_couleur.get('rouge', 0))
+                with col2:
+                    st.metric("🔵 Bleu", stats_couleur.get('bleu', 0))
+                with col3:
+                    st.metric("🟢 Vert", stats_couleur.get('vert', 0))
+                with col4:
+                    st.metric("🟡 Jaune", stats_couleur.get('jaune', 0))
+                
+                # Par taille
+                st.write("**Taille des pièces:**")
+                col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+                with col_t1:
+                    st.metric("P", stats_taille.get('P', 0))
+                with col_t2:
+                    st.metric("M", stats_taille.get('M', 0))
+                with col_t3:
+                    st.metric("G", stats_taille.get('G', 0))
+                with col_t4:
+                    st.metric("TG", stats_taille.get('TG', 0))
+                
+                # Bouton pour nouvelle photo
+                if st.button("📸 Prendre une autre photo", use_container_width=True):
+                    st.rerun()
+                    
+        except Exception as e:
+            st.error(f"Erreur: {str(e)}")
+            st.button("🔄 Réessayer", on_click=st.rerun)
+
+else:
+    # Message d'instruction quand aucune photo n'est prise
+    st.info("👆 Appuyez sur le bouton vert pour ouvrir la caméra")
+    
+    # Option galerie
+    with st.expander("📁 Ou choisir une photo depuis la galerie"):
+        uploaded_file = st.file_uploader("Sélectionner une photo", type=['jpg', 'jpeg', 'png'])
+        
+        if uploaded_file:
+            with st.spinner("🔍 Analyse..."):
                 bytes_data = uploaded_file.getvalue()
                 frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 
                 if frame is not None:
-                    # Redimensionner
-                    height, width = frame.shape[:2]
-                    if width > 400:
-                        scale = 400 / width
-                        new_width = int(width * scale)
-                        new_height = int(height * scale)
-                        frame = cv2.resize(frame, (new_width, new_height))
-                    
-                    # Traitement
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-                    
-                    # Affichage
+                    resultat, pieces, stats_couleur, stats_taille, total = st.session_state.compteur.traiter_frame(frame)
                     st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                            caption=f"🎯 {total_actuel} pièces", use_column_width=True)
-                    
-                    # Statistiques
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Total", total_actuel)
-                    
-            except Exception as e:
-                st.error(f"Erreur: {str(e)}")
+                            caption=f"Résultat: {total} pièces", use_column_width=True)
 
-else:  # Mode démo
-    st.subheader("🧪 Mode démo")
-    
-    if st.button("🎲 Générer une image test"):
-        # Créer une image de test
-        test_img = np.zeros((480, 640, 3), dtype=np.uint8)
-        test_img.fill(255)
-        
-        # Dessiner des cercles
-        cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)
-        cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)
-        cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)
-        cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)
-        
-        # Traitement
-        resultat, pieces, stats_couleur, stats_taille, total = st.session_state.compteur.traiter_frame(test_img)
-        
-        # Affichage
-        st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                caption=f"🎯 {total} pièces", use_column_width=True)
-
-# ============================================
-# 6. HISTORIQUE SIMPLIFIÉ
-# ============================================
-if st.session_state.photos_prises:
-    with st.expander("📜 Dernières photos"):
-        for i, photo in enumerate(reversed(st.session_state.photos_prises[-5:])):
-            st.write(f"Photo {i+1}: {photo['total']} pièces")
-
-# ============================================
-# 7. PIED DE PAGE
-# ============================================
+# Pied de page
 st.markdown("---")
-st.caption("🧩 Compteur de Pièces v4.1 - Version Téléphone")
+st.caption("""
+📱 Version optimisée pour téléphone
+• Appuyez sur le bouton vert pour la caméra
+• Autorisez l'accès si demandé
+""")
