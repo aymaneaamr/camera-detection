@@ -15,56 +15,10 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# Détection du type d'appareil (téléphone ou PC)
-def detecter_appareil():
-    """Détecte si l'utilisateur est sur mobile"""
-    try:
-        # Méthode 1: Via les headers (si disponible)
-        if hasattr(st, 'query_params'):
-            user_agent = st.query_params.get('user_agent', [''])[0]
-            if 'mobile' in user_agent.lower():
-                return True
-        
-        # Méthode 2: Via la largeur d'écran (approximatif)
-        # On utilise st.markdown avec du JavaScript
-        import streamlit.components.v1 as components
-        
-        mobile_detection_script = """
-        <script>
-            // Détection simple du mobile
-            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            const isSmallScreen = window.innerWidth < 768;
-            
-            // Envoyer le résultat à Streamlit
-            const mobile = isMobile || isSmallScreen;
-            window.parent.postMessage({type: 'mobile_detection', isMobile: mobile}, '*');
-        </script>
-        """
-        
-        components.html(mobile_detection_script, height=0)
-        
-        # Par défaut, on suppose que c'est un PC
-        # La valeur sera mise à jour si le JS s'exécute
-        return False
-        
-    except:
-        # En cas d'erreur, on suppose PC
-        return False
-
-# Initialisation des états de session
-if 'compteur' not in st.session_state:
-    st.session_state.compteur = CompteurPieces()
-if 'frame_count' not in st.session_state:
-    st.session_state.frame_count = 0
-if 'is_mobile' not in st.session_state:
-    st.session_state.is_mobile = detecter_appareil()
-if 'camera_active' not in st.session_state:
-    st.session_state.camera_active = False
-if 'photos_prises' not in st.session_state:
-    st.session_state.photos_prises = []
-
+# ============================================
+# 1. DÉFINITION DE LA CLASSE D'ABORD
+# ============================================
 class CompteurPieces:
-    # ... (votre classe CompteurPieces existante) ...
     def __init__(self):
         """Initialise le compteur de pièces"""
         # Couleurs HSV
@@ -90,10 +44,10 @@ class CompteurPieces:
         
         # Seuils de taille
         self.seuils_taille = {
-            'P': (0, 500),
-            'M': (500, 2000),
-            'G': (2000, 5000),
-            'TG': (5000, float('inf'))
+            'P': (0, 500),      # Petite
+            'M': (500, 2000),    # Moyenne
+            'G': (2000, 5000),   # Grande
+            'TG': (5000, float('inf'))  # Très Grande
         }
         
         self.reset_compteur()
@@ -194,296 +148,207 @@ class CompteurPieces:
         
         return resultat, pieces_actuelles, stats_couleur_actuelles, stats_taille_actuelles, total_actuel
 
-# Interface principale
+# ============================================
+# 2. DÉTECTION DU TYPE D'APPAREIL (simplifiée)
+# ============================================
+def detecter_appareil():
+    """Détecte si l'utilisateur est sur mobile (version simplifiée)"""
+    try:
+        # Version simplifiée sans JavaScript
+        # On utilise la largeur de l'écran via les métadonnées
+        return False  # Par défaut, on suppose PC
+    except:
+        return False
+
+# ============================================
+# 3. INITIALISATION DES ÉTATS DE SESSION
+# ============================================
+if 'compteur' not in st.session_state:
+    st.session_state.compteur = CompteurPieces()  # Maintenant la classe est définie
+if 'frame_count' not in st.session_state:
+    st.session_state.frame_count = 0
+if 'is_mobile' not in st.session_state:
+    st.session_state.is_mobile = False  # On désactive la détection mobile pour l'instant
+if 'camera_active' not in st.session_state:
+    st.session_state.camera_active = False
+if 'photos_prises' not in st.session_state:
+    st.session_state.photos_prises = []
+
+# ============================================
+# 4. INTERFACE PRINCIPALE
+# ============================================
 st.title("🧩 Compteur de Pièces")
 
 # Afficher le mode actuel
 device_emoji = "📱" if st.session_state.is_mobile else "💻"
 st.caption(f"{device_emoji} Mode : {'Téléphone' if st.session_state.is_mobile else 'PC'}")
 
-# Sidebar adaptative
+# Sidebar simplifiée pour le téléphone
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # Options adaptées à l'appareil
-    if st.session_state.is_mobile:
-        source = st.radio(
-            "Source",
-            ["📸 Appareil photo", "🖼️ Galerie", "🧪 Mode démo"],
-            horizontal=True
-        )
-    else:
-        source = st.radio(
-            "Source",
-            ["📸 Appareil photo", "🖼️ Galerie", "📁 OneDrive", "🧪 Mode démo"],
-            horizontal=False
-        )
+    # Options adaptées au téléphone (simplifiées)
+    source = st.radio(
+        "Source",
+        ["📸 Appareil photo", "🖼️ Galerie", "🧪 Mode démo"],
+        horizontal=True  # Horizontal pour mobile
+    )
     
     st.markdown("---")
-    st.header("📊 Statistiques")
     
-    if st.button("🔄 Réinitialiser compteurs"):
+    if st.button("🔄 Réinitialiser"):
         st.session_state.compteur.reset_compteur()
         st.session_state.frame_count = 0
         st.rerun()
     
     st.markdown("---")
     
-    # Légende adaptative
-    if st.session_state.is_mobile:
-        with st.expander("📝 Légende"):
-            st.markdown("""
-            - 🔴 Rouge
-            - 🔵 Bleu  
-            - 🟢 Vert
-            - 🟡 Jaune
-            - **P** < 500 px
-            - **M** 500-2000 px
-            - **G** 2000-5000 px
-            - **TG** > 5000 px
-            """)
-    else:
+    # Légende simplifiée
+    with st.expander("📝 Légende"):
         st.markdown("""
-        ### 📝 Légende
         - 🔴 Rouge
         - 🔵 Bleu  
         - 🟢 Vert
         - 🟡 Jaune
-        
-        ### 📏 Tailles
-        - **P** : < 500 px
-        - **M** : 500-2000 px
-        - **G** : 2000-5000 px
-        - **TG** : > 5000 px
+        - **P** < 500 px
+        - **M** 500-2000 px
+        - **G** 2000-5000 px
+        - **TG** > 5000 px
         """)
 
-# Zone principale selon la source choisie
-if source == "📸 Appareil photo" or source == "📸 Appareil photo (téléphone)":
-    st.subheader("📸 Prendre une photo")
+# ============================================
+# 5. TRAITEMENT SELON LA SOURCE
+# ============================================
+if source == "📸 Appareil photo":
+    st.subheader("📸 Prenez une photo")
     
-    if st.session_state.is_mobile:
-        # Interface optimisée pour mobile
-        st.markdown("""
-        <div style='text-align: center; padding: 10px; background: #f0f2f6; border-radius: 10px; margin-bottom: 10px;'>
-            <p style='font-size: 1.2em;'>📱 Appuyez pour prendre une photo</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Widget caméra avec paramètres mobile
-        img_file = st.camera_input(
-            "Prendre une photo",
-            key=f"camera_mobile_{time.time()}",
-            help="Appuyez pour utiliser l'appareil photo"
-        )
-        
-    else:
-        # Interface PC
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            img_file = st.camera_input(
-                "Cliquez pour prendre une photo",
-                key=f"camera_pc_{time.time()}"
-            )
+    # Widget caméra
+    img_file = st.camera_input(
+        "Appuyez pour prendre une photo",
+        key=f"camera_{time.time()}",
+        help="Utilisez l'appareil photo de votre téléphone"
+    )
     
     if img_file is not None:
         with st.spinner("🔍 Analyse en cours..."):
-            # Traitement de l'image
-            bytes_data = img_file.getvalue()
-            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-            
-            # Redimensionnement adaptatif
-            height, width = frame.shape[:2]
-            max_width = 400 if st.session_state.is_mobile else 800
-            if width > max_width:
-                scale = max_width / width
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                frame = cv2.resize(frame, (new_width, new_height))
-            
-            # Traitement
-            resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-            st.session_state.frame_count += 1
-            
-            # Sauvegarder dans l'historique
-            st.session_state.photos_prises.append({
-                'time': time.time(),
-                'total': total_actuel,
-                'stats_couleur': stats_couleur,
-                'stats_taille': stats_taille
-            })
-            
-            # Affichage des résultats (adaptatif)
-            if st.session_state.is_mobile:
-                # Affichage vertical pour mobile
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                        caption=f"🎯 {total_actuel} pièces", use_column_width=True)
+            try:
+                # Lire l'image
+                bytes_data = img_file.getvalue()
+                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 
-                # Stats en colonnes
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    st.metric("Total", total_actuel)
-                with col_m2:
-                    st.metric("Frame", st.session_state.frame_count)
-                
-                # Détail des couleurs en horizontal
-                st.write("**Couleurs:**")
-                cols = st.columns(4)
-                coul_ordre = ['rouge', 'bleu', 'vert', 'jaune']
-                for i, c in enumerate(coul_ordre):
-                    with cols[i]:
-                        count = stats_couleur.get(c, 0)
-                        emoji = ['🔴', '🔵', '🟢', '🟡'][i]
-                        st.metric(emoji, count)
-                
-            else:
-                # Affichage horizontal pour PC
-                col_img1, col_img2 = st.columns(2)
-                with col_img1:
-                    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
-                            caption="Originale", use_column_width=True)
-                with col_img2:
+                if frame is not None:
+                    # Redimensionner pour le téléphone
+                    height, width = frame.shape[:2]
+                    if width > 400:
+                        scale = 400 / width
+                        new_width = int(width * scale)
+                        new_height = int(height * scale)
+                        frame = cv2.resize(frame, (new_width, new_height))
+                    
+                    # Traitement
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
+                    st.session_state.frame_count += 1
+                    
+                    # Sauvegarder dans l'historique
+                    st.session_state.photos_prises.append({
+                        'time': time.time(),
+                        'total': total_actuel
+                    })
+                    
+                    # Afficher le résultat
                     st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                            caption=f"Résultat: {total_actuel} pièces", use_column_width=True)
-                
-                # Statistiques
-                st.subheader("📊 Détail")
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
-                    st.write("**Par couleur :**")
-                    for couleur, count in stats_couleur.items():
-                        if count > 0:
-                            emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡'}.get(couleur, '⚪')
-                            st.write(f"{emoji} {couleur}: {count}")
-                with col_s2:
-                    st.write("**Par taille :**")
-                    for taille in ['P', 'M', 'G', 'TG']:
-                        count = stats_taille.get(taille, 0)
-                        if count > 0:
-                            st.write(f"- {taille}: {count}")
+                            caption=f"🎯 {total_actuel} pièces", use_column_width=True)
+                    
+                    # Statistiques simples
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total", total_actuel)
+                    with col2:
+                        st.metric("Frame", st.session_state.frame_count)
+                    
+                    # Détail des couleurs
+                    st.write("**Couleurs détectées:**")
+                    cols = st.columns(4)
+                    couleurs = ['rouge', 'bleu', 'vert', 'jaune']
+                    emojis = ['🔴', '🔵', '🟢', '🟡']
+                    for i, couleur in enumerate(couleurs):
+                        with cols[i]:
+                            count = stats_couleur.get(couleur, 0)
+                            st.metric(emojis[i], count)
+            
+            except Exception as e:
+                st.error(f"Erreur lors de l'analyse: {str(e)}")
 
 elif source == "🖼️ Galerie":
-    st.subheader("🖼️ Choisir une photo existante")
+    st.subheader("🖼️ Choisir une photo")
     
-    # Interface adaptative pour la galerie
-    if st.session_state.is_mobile:
-        # Version mobile avec sélection simple
-        uploaded_file = st.file_uploader(
-            "Sélectionner une photo",
-            type=['jpg', 'jpeg', 'png'],
-            help="Choisissez une photo dans votre galerie"
-        )
-    else:
-        # Version PC avec options supplémentaires
-        col_up, col_path = st.columns([2, 1])
-        with col_up:
-            uploaded_file = st.file_uploader(
-                "Choisir une photo",
-                type=['jpg', 'jpeg', 'png']
-            )
-        with col_path:
-            if st.button("📁 Ouvrir OneDrive"):
-                home = str(Path.home())
-                onedrive = os.path.join(home, "OneDrive", "Pictures", "Camera Roll")
-                if os.path.exists(onedrive):
-                    try:
-                        os.startfile(onedrive)
-                    except:
-                        st.error("Impossible d'ouvrir le dossier")
+    uploaded_file = st.file_uploader(
+        "Sélectionner une photo",
+        type=['jpg', 'jpeg', 'png'],
+        help="Choisissez une photo dans votre galerie"
+    )
     
     if uploaded_file:
-        # Traitement de l'image (identique aux deux versions)
-        bytes_data = uploaded_file.getvalue()
-        frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-        
-        # Redimensionnement adaptatif
-        height, width = frame.shape[:2]
-        max_width = 400 if st.session_state.is_mobile else 800
-        if width > max_width:
-            scale = max_width / width
-            new_width = int(width * scale)
-            new_height = int(height * scale)
-            frame = cv2.resize(frame, (new_width, new_height))
-        
-        # Traitement
-        resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-        
-        # Affichage adaptatif (similaire à la section caméra)
-        if st.session_state.is_mobile:
-            st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                    caption=f"🎯 {total_actuel} pièces", use_column_width=True)
-            st.metric("Total", total_actuel)
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Originale")
-            with col2:
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), caption=f"Résultat: {total_actuel}")
-
-elif source == "📁 OneDrive" and not st.session_state.is_mobile:
-    st.subheader("📁 Photos OneDrive")
-    
-    # Interface OneDrive (uniquement sur PC)
-    home = str(Path.home())
-    onedrive_photos = os.path.join(home, "OneDrive", "Pictures", "Camera Roll")
-    
-    if os.path.exists(onedrive_photos):
-        photos = [f for f in os.listdir(onedrive_photos) 
-                 if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        photos.sort(reverse=True)
-        
-        selected = st.selectbox("Choisir une photo", photos[:20])
-        
-        if selected:
-            chemin = os.path.join(onedrive_photos, selected)
-            image = Image.open(chemin)
-            st.image(image, caption=selected, use_column_width=True)
-            
-            if st.button("🔍 Analyser"):
-                frame = np.array(image)
-                if len(frame.shape) == 3:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        with st.spinner("🔍 Analyse en cours..."):
+            try:
+                bytes_data = uploaded_file.getvalue()
+                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 
-                resultat, pieces, stats_couleur, stats_taille, total = st.session_state.compteur.traiter_frame(frame)
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), caption=f"Résultat: {total} pièces")
+                if frame is not None:
+                    # Redimensionner
+                    height, width = frame.shape[:2]
+                    if width > 400:
+                        scale = 400 / width
+                        new_width = int(width * scale)
+                        new_height = int(height * scale)
+                        frame = cv2.resize(frame, (new_width, new_height))
+                    
+                    # Traitement
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
+                    
+                    # Affichage
+                    st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                            caption=f"🎯 {total_actuel} pièces", use_column_width=True)
+                    
+                    # Statistiques
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total", total_actuel)
+                    
+            except Exception as e:
+                st.error(f"Erreur: {str(e)}")
 
 else:  # Mode démo
     st.subheader("🧪 Mode démo")
     
-    if st.button("🎲 Générer une image de test"):
-        # Création d'une image de test
+    if st.button("🎲 Générer une image test"):
+        # Créer une image de test
         test_img = np.zeros((480, 640, 3), dtype=np.uint8)
         test_img.fill(255)
         
+        # Dessiner des cercles
         cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)
         cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)
         cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)
         cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)
         
+        # Traitement
         resultat, pieces, stats_couleur, stats_taille, total = st.session_state.compteur.traiter_frame(test_img)
         
-        # Affichage adaptatif
-        if st.session_state.is_mobile:
-            st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                    caption=f"🎯 {total} pièces", use_column_width=True)
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.image(cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB), caption="Test")
-            with col2:
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), caption=f"Résultat: {total}")
+        # Affichage
+        st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                caption=f"🎯 {total} pièces", use_column_width=True)
 
-# Historique des dernières photos (adaptatif)
+# ============================================
+# 6. HISTORIQUE SIMPLIFIÉ
+# ============================================
 if st.session_state.photos_prises:
-    with st.expander("📜 Historique des dernières analyses"):
+    with st.expander("📜 Dernières photos"):
         for i, photo in enumerate(reversed(st.session_state.photos_prises[-5:])):
             st.write(f"Photo {i+1}: {photo['total']} pièces")
-            if not st.session_state.is_mobile:
-                st.write(f"   Couleurs: {dict(photo['stats_couleur'])}")
 
-# Pied de page adaptatif
+# ============================================
+# 7. PIED DE PAGE
+# ============================================
 st.markdown("---")
-st.caption(f"""
-🧩 Compteur de Pièces v4.0 - Interface adaptative
-• Mode {'📱 Téléphone' if st.session_state.is_mobile else '💻 PC'} détecté automatiquement
-• Utilisez {'l\'appareil photo' if st.session_state.is_mobile else 'la caméra ou OneDrive'}
-""")
+st.caption("🧩 Compteur de Pièces v4.1 - Version Téléphone")
