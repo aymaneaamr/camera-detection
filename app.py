@@ -6,6 +6,11 @@ from PIL import Image
 import time
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import av
+import os
+import tempfile
+from pathlib import Path
+import requests
+from io import BytesIO
 
 # Configuration de la page
 st.set_page_config(
@@ -167,6 +172,98 @@ class VideoProcessor(VideoProcessorBase):
         resultat, _, _, _, _ = self.compteur.traiter_frame(img)
         return av.VideoFrame.from_ndarray(resultat, format="bgr24")
 
+# Fonction pour importer depuis OneDrive
+def importer_depuis_onedrive():
+    """Interface pour importer des photos depuis OneDrive"""
+    st.subheader("☁️ Importer depuis OneDrive")
+    
+    # Option 1: Lien de partage OneDrive
+    with st.expander("🔗 Importer par lien de partage", expanded=True):
+        st.markdown("""
+        1. Allez dans OneDrive
+        2. Cliquez droit sur l'image → **Partager**
+        3. Copiez le lien de partage
+        4. Collez-le ci-dessous
+        """)
+        
+        onedrive_url = st.text_input("Lien de partage OneDrive:", placeholder="https://1drv.ms/i/s!...")
+        
+        if onedrive_url:
+            if st.button("📥 Importer depuis ce lien", use_container_width=True):
+                with st.spinner("Téléchargement en cours..."):
+                    try:
+                        # Convertir le lien de partage en lien de téléchargement direct
+                        if "1drv.ms" in onedrive_url:
+                            # Pour les liens courts OneDrive
+                            response = requests.get(onedrive_url, allow_redirects=True)
+                            final_url = response.url
+                            # Extraire l'ID et créer le lien de téléchargement
+                            if "redir?" in final_url:
+                                import re
+                                file_id = re.search(r'[0-9A-Fa-f]{8,}', final_url)
+                                if file_id:
+                                    direct_url = f"https://api.onedrive.com/v1.0/shares/u!{file_id}/root/content"
+                                else:
+                                    direct_url = final_url.replace("redir", "download")
+                            else:
+                                direct_url = final_url.replace("/view", "/download")
+                        else:
+                            direct_url = onedrive_url
+                        
+                        # Télécharger l'image
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                        img_response = requests.get(direct_url, headers=headers, timeout=30)
+                        
+                        if img_response.status_code == 200:
+                            img_data = BytesIO(img_response.content)
+                            pil_image = Image.open(img_data)
+                            # Convertir en format OpenCV
+                            open_cv_image = np.array(pil_image)
+                            if len(open_cv_image.shape) == 3:
+                                open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGB2BGR)
+                            
+                            st.session_state.onedrive_image = open_cv_image
+                            st.session_state.onedrive_image_loaded = True
+                            st.success("✅ Image importée avec succès!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Erreur de téléchargement: {img_response.status_code}")
+                    except Exception as e:
+                        st.error(f"❌ Erreur: {str(e)}")
+    
+    # Option 2: Upload direct depuis OneDrive (via fichier local)
+    with st.expander("📁 Ouvrir depuis OneDrive synchro"):
+        st.markdown("""
+        Si vous avez OneDrive synchronisé sur votre PC, vous pouvez aussi :
+        1. Ouvrir votre dossier OneDrive dans l'explorateur
+        2. Glisser-déposer les photos directement ci-dessous
+        """)
+        
+        uploaded_file = st.file_uploader(
+            "Glissez vos photos OneDrive ici",
+            type=['jpg', 'jpeg', 'png', 'gif', 'bmp'],
+            key="onedrive_upload"
+        )
+        
+        if uploaded_file:
+            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+            st.session_state.onedrive_image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            st.session_state.onedrive_image_loaded = True
+            st.success(f"✅ Image chargée: {uploaded_file.name}")
+            st.rerun()
+    
+    # Option 3: Guide d'export OneDrive
+    with st.expander("📱 Depuis l'application mobile OneDrive"):
+        st.markdown("""
+        **Depuis votre téléphone :**
+        1. Ouvrez l'application OneDrive
+        2. Trouvez votre photo
+        3. Tapez sur les **3 points** → **Exporter** → **Enregistrer sur l'appareil**
+        4. Revenez sur ce PC et utilisez l'option **Uploader une image**
+        """)
+
 # Initialisation du compteur dans la session
 if 'compteur' not in st.session_state:
     st.session_state.compteur = CompteurPieces()
@@ -174,6 +271,10 @@ if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
 if 'mode' not in st.session_state:
     st.session_state.mode = None
+if 'onedrive_image' not in st.session_state:
+    st.session_state.onedrive_image = None
+if 'onedrive_image_loaded' not in st.session_state:
+    st.session_state.onedrive_image_loaded = False
 
 compteur = st.session_state.compteur
 
@@ -285,7 +386,7 @@ if st.session_state.mode == "mobile":
 
 else:
     # ========== INTERFACE PC (ORDINATEUR) ==========
-    st.info("💻 Mode PC détecté - Interface complète")
+    st.info("💻 Mode PC détecté - Interface complète avec OneDrive")
     
     # Sidebar pour les paramètres
     with st.sidebar:
@@ -293,7 +394,7 @@ else:
         
         source = st.radio(
             "Source",
-            ["📸 Prendre une photo", "🎥 Flux en direct", "🖼️ Uploader une image", "🧪 Mode démo"]
+            ["📸 Prendre une photo", "🎥 Flux en direct", "🖼️ Uploader une image", "☁️ OneDrive", "🧪 Mode démo"]
         )
         
         st.markdown("---")
@@ -302,6 +403,8 @@ else:
         if st.button("🔄 Réinitialiser compteurs", use_container_width=True):
             compteur.reset_compteur()
             st.session_state.frame_count = 0
+            st.session_state.onedrive_image = None
+            st.session_state.onedrive_image_loaded = False
             st.rerun()
         
         st.markdown("---")
@@ -442,6 +545,47 @@ else:
                         if count > 0:
                             st.write(f"- {taille}: {count}")
     
+    elif source == "☁️ OneDrive":
+        # Interface OneDrive
+        importer_depuis_onedrive()
+        
+        # Si une image OneDrive a été chargée
+        if st.session_state.onedrive_image_loaded and st.session_state.onedrive_image is not None:
+            st.markdown("---")
+            st.subheader("📸 Image importée de OneDrive")
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("🔍 Analyser cette image", use_container_width=True):
+                    with st.spinner("🔍 Analyse en cours..."):
+                        frame = st.session_state.onedrive_image
+                        resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(frame)
+                        st.session_state.frame_count += 1
+                        
+                        st.success(f"✅ **{total_actuel} pièces** détectées !")
+                        
+                        col_img1, col_img2 = st.columns(2)
+                        with col_img1:
+                            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                                    caption="☁️ Image OneDrive", use_column_width=True)
+                        with col_img2:
+                            st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                                    caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
+                        
+                        # Résultats
+                        st.subheader("📊 Résultats")
+                        col_r1, col_r2 = st.columns(2)
+                        with col_r1:
+                            st.write("**Couleurs:**", dict(stats_couleur))
+                        with col_r2:
+                            st.write("**Tailles:**", dict(stats_taille))
+            
+            with col2:
+                if st.button("🗑️ Effacer l'image", use_container_width=True):
+                    st.session_state.onedrive_image = None
+                    st.session_state.onedrive_image_loaded = False
+                    st.rerun()
+    
     else:  # Mode démo
         st.subheader("🧪 Mode démo")
         
@@ -478,7 +622,8 @@ else:
 # Pied de page commun
 st.markdown("---")
 st.caption("""
-🧩 Compteur de Pièces v3.0 - Interface Adaptative
+🧩 Compteur de Pièces v3.1 - Interface Adaptative avec OneDrive
 • S'adapte automatiquement à votre appareil (mobile/PC)
+• Importez vos photos directement depuis OneDrive
 • Interface optimisée pour chaque type d'écran
 """)
