@@ -4,17 +4,20 @@ import numpy as np
 from collections import defaultdict
 from PIL import Image
 import time
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Compteur de Pièces - Téléphone",
-    page_icon="📱",
-    layout="centered"  # Centré pour mobile
+    page_title="Compteur de Pièces - Direct",
+    page_icon="🎥",
+    layout="centered"
 )
 
 class CompteurPieces:
     def __init__(self):
         """Initialise le compteur de pièces"""
+        # Couleurs HSV
         self.couleurs = {
             'rouge': {
                 'lower1': np.array([0, 100, 100]), 'upper1': np.array([10, 255, 255]),
@@ -35,11 +38,12 @@ class CompteurPieces:
             }
         }
         
+        # Seuils de taille
         self.seuils_taille = {
-            'P': (0, 500),
-            'M': (500, 2000),
-            'G': (2000, 5000),
-            'TG': (5000, float('inf'))
+            'P': (0, 500),      # Petite
+            'M': (500, 2000),    # Moyenne
+            'G': (2000, 5000),   # Grande
+            'TG': (5000, float('inf'))  # Très Grande
         }
         
         self.reset_compteur()
@@ -92,6 +96,7 @@ class CompteurPieces:
         resultat = frame.copy()
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
+        # Détection des contours
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         edges = cv2.Canny(blur, 50, 150)
@@ -108,7 +113,7 @@ class CompteurPieces:
         
         for contour in contours:
             aire = cv2.contourArea(contour)
-            if aire < 200:
+            if aire < 200:  # Ignorer les petits contours
                 continue
             
             x, y, w, h = cv2.boundingRect(contour)
@@ -129,6 +134,7 @@ class CompteurPieces:
             stats_couleur_actuelles[couleur_nom] += 1
             stats_taille_actuelles[taille_nom] += 1
             
+            # Dessiner la pièce
             cv2.rectangle(resultat, (x, y), (x+w, y+h), couleur_bbox, 2)
             cv2.circle(resultat, centre, 3, (255, 255, 255), -1)
             cv2.putText(resultat, f"#{len(pieces_actuelles)}", (x+5, y+20),
@@ -136,153 +142,110 @@ class CompteurPieces:
         
         total_actuel = len(pieces_actuelles)
         
+        # Ajouter le compteur sur l'image
+        h, w = resultat.shape[:2]
+        cv2.putText(resultat, f"TOTAL: {total_actuel}", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
         return resultat, pieces_actuelles, stats_couleur_actuelles, stats_taille_actuelles, total_actuel
 
 # Initialisation
 if 'compteur' not in st.session_state:
     st.session_state.compteur = CompteurPieces()
-if 'frame_count' not in st.session_state:
-    st.session_state.frame_count = 0
+if 'stats_couleur' not in st.session_state:
+    st.session_state.stats_couleur = defaultdict(int)
+if 'stats_taille' not in st.session_state:
+    st.session_state.stats_taille = defaultdict(int)
+if 'total_actuel' not in st.session_state:
+    st.session_state.total_actuel = 0
 
-# ============================================
-# INTERFACE SIMPLIFIÉE POUR TÉLÉPHONE
-# ============================================
-st.title("📱 Compteur de Pièces")
-
-# Grand bouton bien visible pour ouvrir la caméra
+# Interface
+st.title("🎥 Compteur de Pièces - Temps Réel")
 st.markdown("""
-<style>
-    .stCameraInput {
-        border: 3px solid #4CAF50;
-        border-radius: 15px;
-        padding: 10px;
-    }
-    .stCameraInput button {
-        background-color: #4CAF50;
-        color: white;
-        font-size: 20px;
-        padding: 20px;
-        border-radius: 15px;
-        width: 100%;
-    }
-</style>
-""", unsafe_allow_html=True)
+**Pointez la caméra vers les pièces - La détection est automatique !**
+""")
 
-# Option 1: Grand bouton caméra
-st.subheader("📸 Étape 1: Appuyez pour ouvrir la caméra")
-
-# Créer un conteneur pour la caméra
-camera_container = st.container()
-
-with camera_container:
-    # Le widget camera_input avec un key unique qui change à chaque rafraîchissement
-    img_file = st.camera_input(
-        "📱 Appuyez ici pour utiliser l'appareil photo",
-        key=f"camera_{int(time.time())}",
-        help="Appuyez pour prendre une photo"
-    )
-
-# Option 2: Bouton d'aide si la caméra ne s'ouvre pas
-with st.expander("🔧 La caméra ne s'ouvre pas ?"):
-    st.markdown("""
-    **Sur iPhone:**
-    1. Allez dans Réglages > Safari
-    2. Descendez jusqu'à "Caméra"
-    3. Sélectionnez "Autoriser"
+# Sidebar avec les stats
+with st.sidebar:
+    st.header("📊 Statistiques")
     
-    **Sur Android:**
-    1. Allez dans Paramètres > Applications > Chrome
-    2. Appuyez sur "Autorisations"
-    3. Activez "Appareil photo"
+    # Métrique principale
+    st.metric("Pièces détectées", st.session_state.total_actuel)
     
-    **Puis rafraîchissez la page** 🔄
-    """)
-
-# Traitement de l'image
-if img_file is not None:
-    with st.spinner("🔍 Analyse en cours..."):
-        try:
-            # Lire l'image
-            bytes_data = img_file.getvalue()
-            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-            
-            if frame is not None:
-                # Redimensionner pour le téléphone
-                height, width = frame.shape[:2]
-                if width > 400:
-                    scale = 400 / width
-                    new_width = int(width * scale)
-                    new_height = int(height * scale)
-                    frame = cv2.resize(frame, (new_width, new_height))
-                
-                # Traitement
-                resultat, pieces, stats_couleur, stats_taille, total_actuel = st.session_state.compteur.traiter_frame(frame)
-                st.session_state.frame_count += 1
-                
-                # Afficher le résultat
-                st.subheader(f"✅ Résultat: {total_actuel} pièces")
-                
-                # Image résultat
-                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                        caption=f"🎯 {total_actuel} pièces détectées", 
-                        use_column_width=True)
-                
-                # Statistiques en grille
-                st.subheader("📊 Détails")
-                
-                # Par couleur
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("🔴 Rouge", stats_couleur.get('rouge', 0))
-                with col2:
-                    st.metric("🔵 Bleu", stats_couleur.get('bleu', 0))
-                with col3:
-                    st.metric("🟢 Vert", stats_couleur.get('vert', 0))
-                with col4:
-                    st.metric("🟡 Jaune", stats_couleur.get('jaune', 0))
-                
-                # Par taille
-                st.write("**Taille des pièces:**")
-                col_t1, col_t2, col_t3, col_t4 = st.columns(4)
-                with col_t1:
-                    st.metric("P", stats_taille.get('P', 0))
-                with col_t2:
-                    st.metric("M", stats_taille.get('M', 0))
-                with col_t3:
-                    st.metric("G", stats_taille.get('G', 0))
-                with col_t4:
-                    st.metric("TG", stats_taille.get('TG', 0))
-                
-                # Bouton pour nouvelle photo
-                if st.button("📸 Prendre une autre photo", use_container_width=True):
-                    st.rerun()
-                    
-        except Exception as e:
-            st.error(f"Erreur: {str(e)}")
-            st.button("🔄 Réessayer", on_click=st.rerun)
-
-else:
-    # Message d'instruction quand aucune photo n'est prise
-    st.info("👆 Appuyez sur le bouton vert pour ouvrir la caméra")
+    st.markdown("---")
     
-    # Option galerie
-    with st.expander("📁 Ou choisir une photo depuis la galerie"):
-        uploaded_file = st.file_uploader("Sélectionner une photo", type=['jpg', 'jpeg', 'png'])
+    # Par couleur
+    st.subheader("🎨 Par couleur")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"🔴 Rouge: {st.session_state.stats_couleur.get('rouge', 0)}")
+        st.write(f"🔵 Bleu: {st.session_state.stats_couleur.get('bleu', 0)}")
+    with col2:
+        st.write(f"🟢 Vert: {st.session_state.stats_couleur.get('vert', 0)}")
+        st.write(f"🟡 Jaune: {st.session_state.stats_couleur.get('jaune', 0)}")
+    
+    st.markdown("---")
+    
+    # Par taille
+    st.subheader("📏 Par taille")
+    st.write(f"P: {st.session_state.stats_taille.get('P', 0)}")
+    st.write(f"M: {st.session_state.stats_taille.get('M', 0)}")
+    st.write(f"G: {st.session_state.stats_taille.get('G', 0)}")
+    st.write(f"TG: {st.session_state.stats_taille.get('TG', 0)}")
+    
+    st.markdown("---")
+    
+    if st.button("🔄 Réinitialiser", use_container_width=True):
+        st.session_state.compteur.reset_compteur()
+        st.session_state.stats_couleur = defaultdict(int)
+        st.session_state.stats_taille = defaultdict(int)
+        st.session_state.total_actuel = 0
+        st.rerun()
+
+# Zone principale - Flux vidéo
+st.subheader("📹 Flux en direct")
+
+# Processeur vidéo pour WebRTC
+class VideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.compteur = st.session_state.compteur
+    
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
         
-        if uploaded_file:
-            with st.spinner("🔍 Analyse..."):
-                bytes_data = uploaded_file.getvalue()
-                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                
-                if frame is not None:
-                    resultat, pieces, stats_couleur, stats_taille, total = st.session_state.compteur.traiter_frame(frame)
-                    st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                            caption=f"Résultat: {total} pièces", use_column_width=True)
+        # Traiter la frame
+        resultat, pieces, stats_couleur, stats_taille, total = self.compteur.traiter_frame(img)
+        
+        # Mettre à jour les stats dans la session
+        st.session_state.stats_couleur = stats_couleur
+        st.session_state.stats_taille = stats_taille
+        st.session_state.total_actuel = total
+        
+        return av.VideoFrame.from_ndarray(resultat, format="bgr24")
+
+# Lancer le flux vidéo
+ctx = webrtc_streamer(
+    key="object-detection",
+    mode=WebRtcMode.SENDRECV,
+    video_processor_factory=VideoProcessor,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
+
+# Instructions
+if not ctx.state.playing:
+    st.info("""
+    👆 **Cliquez sur 'START' pour activer la caméra**
+    
+    Puis pointez vers des pièces colorées !
+    """)
+else:
+    st.success("✅ Caméra active - Détection en cours...")
 
 # Pied de page
 st.markdown("---")
 st.caption("""
-📱 Version optimisée pour téléphone
-• Appuyez sur le bouton vert pour la caméra
-• Autorisez l'accès si demandé
+🎥 Détection en temps réel - Pointez et comptez !
+• Rouge, Bleu, Vert, Jaune
+• Classification par taille (P, M, G, TG)
 """)
