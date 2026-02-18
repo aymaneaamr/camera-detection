@@ -40,19 +40,19 @@ class CompteurPieces:
         
         # Seuils de taille
         self.seuils_taille = {
-            'P': (0, 500),      # Petite
-            'M': (500, 2000),    # Moyenne
-            'G': (2000, 5000),   # Grande
-            'TG': (5000, float('inf'))  # Très Grande
+            'P': (0, 500),
+            'M': (500, 2000),
+            'G': (2000, 5000),
+            'TG': (5000, float('inf'))
         }
         
         self.reset_compteur()
     
     def reset_compteur(self):
         """Réinitialise tous les compteurs"""
-        self.stats_couleur_total = defaultdict(int)
-        self.stats_taille_total = defaultdict(int)
-        self.total_pieces_cumule = 0
+        self.stats_couleur = defaultdict(int)
+        self.stats_taille = defaultdict(int)
+        self.total_pieces = 0
     
     def get_couleur_piece(self, hsv, contour):
         """Détermine la couleur d'une pièce"""
@@ -107,9 +107,9 @@ class CompteurPieces:
         
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        pieces_actuelles = []
-        stats_couleur_actuelles = defaultdict(int)
-        stats_taille_actuelles = defaultdict(int)
+        # Réinitialiser les stats pour cette frame
+        stats_couleur_frame = defaultdict(int)
+        stats_taille_frame = defaultdict(int)
         
         for contour in contours:
             aire = cv2.contourArea(contour)
@@ -122,42 +122,31 @@ class CompteurPieces:
             couleur_nom, couleur_bbox = self.get_couleur_piece(hsv, contour)
             taille_nom = self.get_taille_piece(aire)
             
-            pieces_actuelles.append({
-                'contour': contour,
-                'aire': aire,
-                'bbox': (x, y, w, h),
-                'couleur': couleur_nom,
-                'taille': taille_nom,
-                'centre': centre
-            })
-            
-            stats_couleur_actuelles[couleur_nom] += 1
-            stats_taille_actuelles[taille_nom] += 1
+            stats_couleur_frame[couleur_nom] += 1
+            stats_taille_frame[taille_nom] += 1
             
             # Dessiner la pièce
             cv2.rectangle(resultat, (x, y), (x+w, y+h), couleur_bbox, 2)
             cv2.circle(resultat, centre, 3, (255, 255, 255), -1)
-            cv2.putText(resultat, f"#{len(pieces_actuelles)}", (x+5, y+20),
+            cv2.putText(resultat, f"{couleur_nom[0]}{taille_nom}", (x+5, y+20),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-        total_actuel = len(pieces_actuelles)
+        total_actuel = len(contours)
+        
+        # Mettre à jour les stats cumulées
+        self.stats_couleur = stats_couleur_frame
+        self.stats_taille = stats_taille_frame
+        self.total_pieces = total_actuel
         
         # Ajouter le compteur sur l'image
         h, w = resultat.shape[:2]
         cv2.putText(resultat, f"TOTAL: {total_actuel}", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         
-        return resultat, pieces_actuelles, stats_couleur_actuelles, stats_taille_actuelles, total_actuel
+        return resultat
 
-# Initialisation
-if 'compteur' not in st.session_state:
-    st.session_state.compteur = CompteurPieces()
-if 'stats_couleur' not in st.session_state:
-    st.session_state.stats_couleur = defaultdict(int)
-if 'stats_taille' not in st.session_state:
-    st.session_state.stats_taille = defaultdict(int)
-if 'total_actuel' not in st.session_state:
-    st.session_state.total_actuel = 0
+# Créer une instance globale du compteur
+compteur = CompteurPieces()
 
 # Interface
 st.title("🎥 Compteur de Pièces - Temps Réel")
@@ -170,56 +159,47 @@ with st.sidebar:
     st.header("📊 Statistiques")
     
     # Métrique principale
-    st.metric("Pièces détectées", st.session_state.total_actuel)
+    total_placeholder = st.empty()
+    total_placeholder.metric("Pièces détectées", 0)
     
     st.markdown("---")
     
     # Par couleur
     st.subheader("🎨 Par couleur")
     col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"🔴 Rouge: {st.session_state.stats_couleur.get('rouge', 0)}")
-        st.write(f"🔵 Bleu: {st.session_state.stats_couleur.get('bleu', 0)}")
-    with col2:
-        st.write(f"🟢 Vert: {st.session_state.stats_couleur.get('vert', 0)}")
-        st.write(f"🟡 Jaune: {st.session_state.stats_couleur.get('jaune', 0)}")
+    rouge_placeholder = col1.empty()
+    bleu_placeholder = col2.empty()
+    vert_placeholder = col1.empty()
+    jaune_placeholder = col2.empty()
     
     st.markdown("---")
     
     # Par taille
     st.subheader("📏 Par taille")
-    st.write(f"P: {st.session_state.stats_taille.get('P', 0)}")
-    st.write(f"M: {st.session_state.stats_taille.get('M', 0)}")
-    st.write(f"G: {st.session_state.stats_taille.get('G', 0)}")
-    st.write(f"TG: {st.session_state.stats_taille.get('TG', 0)}")
+    p_placeholder = st.empty()
+    m_placeholder = st.empty()
+    g_placeholder = st.empty()
+    tg_placeholder = st.empty()
     
     st.markdown("---")
     
     if st.button("🔄 Réinitialiser", use_container_width=True):
-        st.session_state.compteur.reset_compteur()
-        st.session_state.stats_couleur = defaultdict(int)
-        st.session_state.stats_taille = defaultdict(int)
-        st.session_state.total_actuel = 0
+        compteur.reset_compteur()
         st.rerun()
 
 # Zone principale - Flux vidéo
 st.subheader("📹 Flux en direct")
 
-# Processeur vidéo pour WebRTC
+# Processeur vidéo pour WebRTC (version corrigée)
 class VideoProcessor(VideoProcessorBase):
     def __init__(self):
-        self.compteur = st.session_state.compteur
+        self.compteur_local = compteur  # Utiliser l'instance globale
     
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         
         # Traiter la frame
-        resultat, pieces, stats_couleur, stats_taille, total = self.compteur.traiter_frame(img)
-        
-        # Mettre à jour les stats dans la session
-        st.session_state.stats_couleur = stats_couleur
-        st.session_state.stats_taille = stats_taille
-        st.session_state.total_actuel = total
+        resultat = self.compteur_local.traiter_frame(img)
         
         return av.VideoFrame.from_ndarray(resultat, format="bgr24")
 
@@ -231,6 +211,22 @@ ctx = webrtc_streamer(
     media_stream_constraints={"video": True, "audio": False},
     async_processing=True,
 )
+
+# Mise à jour des stats (exécuté à chaque rafraîchissement)
+if compteur.total_pieces > 0 or True:  # Toujours mettre à jour
+    total_placeholder.metric("Pièces détectées", compteur.total_pieces)
+    
+    # Mise à jour des couleurs
+    rouge_placeholder.metric("🔴 Rouge", compteur.stats_couleur.get('rouge', 0))
+    bleu_placeholder.metric("🔵 Bleu", compteur.stats_couleur.get('bleu', 0))
+    vert_placeholder.metric("🟢 Vert", compteur.stats_couleur.get('vert', 0))
+    jaune_placeholder.metric("🟡 Jaune", compteur.stats_couleur.get('jaune', 0))
+    
+    # Mise à jour des tailles
+    p_placeholder.metric("P", compteur.stats_taille.get('P', 0))
+    m_placeholder.metric("M", compteur.stats_taille.get('M', 0))
+    g_placeholder.metric("G", compteur.stats_taille.get('G', 0))
+    tg_placeholder.metric("TG", compteur.stats_taille.get('TG', 0))
 
 # Instructions
 if not ctx.state.playing:
