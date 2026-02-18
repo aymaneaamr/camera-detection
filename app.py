@@ -17,7 +17,7 @@ st.set_page_config(
 class CompteurPieces:
     def __init__(self):
         """Initialise le compteur de pièces"""
-        # Couleurs HSV (inclut maintenant le gris)
+        # Couleurs HSV
         self.couleurs = {
             'rouge': {
                 'lower1': np.array([0, 100, 100]), 'upper1': np.array([10, 255, 255]),
@@ -35,24 +35,16 @@ class CompteurPieces:
             'jaune': {
                 'lower': np.array([20, 100, 100]), 'upper': np.array([30, 255, 255]),
                 'couleur_bbox': (0, 255, 255)
-            },
-            'gris': {   # Nouvelle couleur pour les boulons / métal
-                'lower': np.array([0, 0, 50]),    # Saturation très faible, Valeur min 50
-                'upper': np.array([180, 50, 255]), # Teinte quelconque, Saturation max 50
-                'couleur_bbox': (128, 128, 128)    # Gris en BGR
             }
         }
         
-        # Seuils de taille ajustés pour les petits objets (boulons)
+        # Seuils de taille
         self.seuils_taille = {
-            'P': (0, 100),       # Très petite (boulons)
-            'M': (100, 500),     # Petite à moyenne
-            'G': (500, 2000),    # Moyenne à grande
-            'TG': (2000, float('inf'))  # Très grande
+            'P': (0, 500),      # Petite
+            'M': (500, 2000),    # Moyenne
+            'G': (2000, 5000),   # Grande
+            'TG': (5000, float('inf'))  # Très Grande
         }
-        
-        # Mode de détection par défaut
-        self.mode_detection = "Pièces colorées"  # ou "Boulons"
         
         self.reset_compteur()
     
@@ -66,7 +58,7 @@ class CompteurPieces:
         self.total_pieces_cumule = 0
     
     def get_couleur_piece(self, hsv, contour):
-        """Détermine la couleur d'une pièce (inclut le gris)"""
+        """Détermine la couleur d'une pièce"""
         mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
         cv2.drawContours(mask, [contour], -1, 255, -1)
         
@@ -74,13 +66,7 @@ class CompteurPieces:
         best_score = 0
         best_color_bbox = (128, 128, 128)
         
-        # Si mode "Boulons", on force la couleur 'gris' et on ignore les autres ?
-        # On va plutôt garder la logique de meilleure correspondance,
-        # mais on peut éventuellement pénaliser les couleurs si on veut uniquement du gris.
-        # Ici on laisse l'algo choisir la couleur dominante.
-        
         for nom_couleur, params in self.couleurs.items():
-            # Gestion des couleurs à deux plages (rouge)
             if 'lower1' in params:
                 mask1 = cv2.inRange(hsv, params['lower1'], params['upper1'])
                 mask2 = cv2.inRange(hsv, params['lower2'], params['upper2'])
@@ -94,8 +80,7 @@ class CompteurPieces:
             
             if pixels_total > 0:
                 score = pixels_couleur / pixels_total
-                # Seuil de confiance abaissé à 0.15 pour mieux capter les gris
-                if score > best_score and score > 0.15:
+                if score > best_score and score > 0.2:
                     best_score = score
                     best_couleur = nom_couleur
                     best_color_bbox = params['couleur_bbox']
@@ -131,8 +116,7 @@ class CompteurPieces:
         
         for contour in contours:
             aire = cv2.contourArea(contour)
-            # Seuil réduit à 50 pour capturer les petits boulons
-            if aire < 50:
+            if aire < 200:
                 continue
             
             x, y, w, h = cv2.boundingRect(contour)
@@ -190,8 +174,6 @@ if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
 if 'mode' not in st.session_state:
     st.session_state.mode = None
-if 'detection_mode' not in st.session_state:
-    st.session_state.detection_mode = "Pièces colorées"  # ou "Boulons"
 
 compteur = st.session_state.compteur
 
@@ -199,7 +181,7 @@ compteur = st.session_state.compteur
 st.title("🧩 Compteur de Pièces - Interface Adaptative")
 st.markdown("""
 Cette application détecte et compte automatiquement les pièces :
-- **Détection par couleur** (rouge, bleu, vert, jaune, gris)
+- **Détection par couleur** (rouge, bleu, vert, jaune)
 - **Classification par taille** (P, M, G, TG)
 - **S'adapte automatiquement à votre appareil**
 """)
@@ -231,15 +213,6 @@ if st.session_state.mode == "mobile":
     with st.container():
         st.subheader("📸 Prendre une photo")
         
-        # Sélecteur de mode de détection
-        detection_mode = st.radio(
-            "Mode de détection",
-            ["Pièces colorées", "Boulons (gris)"],
-            index=0 if st.session_state.detection_mode == "Pièces colorées" else 1,
-            key="mobile_detection_mode"
-        )
-        st.session_state.detection_mode = detection_mode
-        
         # Affichage compact
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -265,8 +238,7 @@ if st.session_state.mode == "mobile":
                     st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), use_column_width=True)
                     
                     # Stats en lignes
-                    couleurs_affichees = [c for c in ['rouge','bleu','vert','jaune','gris'] if stats_couleur.get(c,0)>0]
-                    st.write("**Couleurs:** " + ", ".join([f"{c}:{stats_couleur.get(c,0)}" for c in couleurs_affichees]))
+                    st.write("**Couleurs:** " + ", ".join([f"{c}:{stats_couleur.get(c,0)}" for c in ['rouge','bleu','vert','jaune'] if stats_couleur.get(c,0)>0]))
                     st.write("**Tailles:** " + ", ".join([f"{t}:{stats_taille.get(t,0)}" for t in ['P','M','G','TG'] if stats_taille.get(t,0)>0]))
         
         elif source == "🖼️ Galerie":
@@ -293,12 +265,10 @@ if st.session_state.mode == "mobile":
                     test_img = np.zeros((480, 640, 3), dtype=np.uint8)
                     test_img.fill(255)
                     
-                    # Ajout de quelques formes colorées + un boulon gris
-                    cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)      # rouge
-                    cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)      # bleu
-                    cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)      # vert
-                    cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)    # jaune
-                    cv2.circle(test_img, (450, 350), 25, (128, 128, 128), -1)  # gris (boulon)
+                    cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)
+                    cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)
+                    cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)
+                    cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)
                     
                     resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(test_img)
                     
@@ -312,7 +282,6 @@ if st.session_state.mode == "mobile":
                     with col2:
                         st.metric("Vert", stats_couleur.get('vert',0))
                         st.metric("Jaune", stats_couleur.get('jaune',0))
-                        st.metric("Gris", stats_couleur.get('gris',0))
 
 else:
     # ========== INTERFACE PC (ORDINATEUR) ==========
@@ -321,15 +290,6 @@ else:
     # Sidebar pour les paramètres
     with st.sidebar:
         st.header("⚙️ Configuration")
-        
-        # Sélecteur de mode de détection
-        detection_mode = st.radio(
-            "Mode de détection",
-            ["Pièces colorées", "Boulons (gris)"],
-            index=0 if st.session_state.detection_mode == "Pièces colorées" else 1,
-            key="pc_detection_mode"
-        )
-        st.session_state.detection_mode = detection_mode
         
         source = st.radio(
             "Source",
@@ -351,13 +311,12 @@ else:
         - 🔵 Bleu  
         - 🟢 Vert
         - 🟡 Jaune
-        - ⚪ Gris (boulons)
         
         ### 📏 Tailles
-        - **P** : < 100 px
-        - **M** : 100-500 px
-        - **G** : 500-2000 px
-        - **TG** : > 2000 px
+        - **P** : < 500 px
+        - **M** : 500-2000 px
+        - **G** : 2000-5000 px
+        - **TG** : > 5000 px
         """)
     
     # Zone principale PC
@@ -400,12 +359,12 @@ else:
                 # Tableau des couleurs
                 st.write("**🎨 Répartition par couleur :**")
                 cols = st.columns(5)
-                couleurs_list = ['rouge', 'bleu', 'vert', 'jaune', 'gris']
-                color_emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', 'gris': '⚪'}
+                couleurs_list = ['rouge', 'bleu', 'vert', 'jaune', 'autre']
+                color_emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', 'autre': '⚪'}
                 
                 for i, couleur in enumerate(couleurs_list):
                     with cols[i]:
-                        count = stats_couleur.get(couleur, 0)
+                        count = stats_couleur.get(couleur if couleur != 'autre' else '?', 0)
                         st.metric(f"{color_emoji[couleur]} {couleur}", count)
                 
                 # Tableau des tailles
@@ -429,7 +388,7 @@ else:
         with st.sidebar:
             st.metric("Pièces actuellement", compteur.total_pieces)
             st.write("**Couleurs:**")
-            for c in ['rouge', 'bleu', 'vert', 'jaune', 'gris']:
+            for c in ['rouge', 'bleu', 'vert', 'jaune']:
                 if compteur.stats_couleur.get(c, 0) > 0:
                     st.write(f"- {c}: {compteur.stats_couleur.get(c, 0)}")
         
@@ -472,7 +431,7 @@ else:
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
                     st.write("**Par couleur :**")
-                    for couleur in ['rouge', 'bleu', 'vert', 'jaune', 'gris', '?']:
+                    for couleur in ['rouge', 'bleu', 'vert', 'jaune', '?']:
                         count = stats_couleur.get(couleur, 0)
                         if count > 0:
                             st.write(f"- {couleur}: {count}")
@@ -491,12 +450,11 @@ else:
                 test_img = np.zeros((480, 640, 3), dtype=np.uint8)
                 test_img.fill(255)
                 
-                # Création de formes (incluant un gris)
                 cv2.circle(test_img, (200, 200), 50, (0, 0, 255), -1)
                 cv2.circle(test_img, (350, 250), 40, (255, 0, 0), -1)
                 cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)
                 cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)
-                cv2.circle(test_img, (450, 350), 25, (128, 128, 128), -1)  # boulon gris
+                cv2.circle(test_img, (450, 350), 60, (100, 100, 100), -1)
                 
                 resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(test_img)
                 st.session_state.frame_count += 1
@@ -520,7 +478,7 @@ else:
 # Pied de page commun
 st.markdown("---")
 st.caption("""
-🧩 Compteur de Pièces v3.1 - Interface Adaptative avec détection des boulons
+🧩 Compteur de Pièces v3.0 - Interface Adaptative
 • S'adapte automatiquement à votre appareil (mobile/PC)
-• Détection des couleurs et du gris (métal)
+• Interface optimisée pour chaque type d'écran
 """)
