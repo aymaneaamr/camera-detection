@@ -12,6 +12,7 @@ from pathlib import Path
 import requests
 from io import BytesIO
 import re
+import urllib.parse
 
 # Configuration de la page
 st.set_page_config(
@@ -173,129 +174,90 @@ class VideoProcessor(VideoProcessorBase):
         resultat, _, _, _, _ = self.compteur.traiter_frame(img)
         return av.VideoFrame.from_ndarray(resultat, format="bgr24")
 
-# Fonction pour télécharger depuis OneDrive (version corrigée)
+# Fonction pour télécharger depuis OneDrive (version simplifiée sans BeautifulSoup)
 def telecharger_depuis_onedrive(url):
     """Télécharge une image depuis un lien OneDrive"""
     try:
         st.info("🔄 Tentative de téléchargement...")
         
-        # Étape 1: Résoudre le lien court
+        # Configuration de la session
         session = requests.Session()
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         
-        # Suivre les redirections pour obtenir l'URL finale
+        # Étape 1: Résoudre le lien court
         response = session.get(url, allow_redirects=True, timeout=10)
         final_url = response.url
-        st.write(f"URL résolue: {final_url}")
+        st.write(f"URL résolue")
         
-        # Étape 2: Extraire l'ID du fichier
-        # Pattern pour les URLs OneDrive
-        patterns = [
-            r'id=([a-fA-F0-9!]+)',  # Format avec id=
-            r'/d/([^/]+)',          # Format /d/ID
-            r'([a-fA-F0-9]{16,})'    # ID directement
-        ]
+        # Étape 2: Extraire l'ID
+        # Chercher l'ID dans l'URL
+        id_match = re.search(r'([A-F0-9]{16,})', final_url)
+        file_id = id_match.group(1) if id_match else None
         
-        file_id = None
-        for pattern in patterns:
-            match = re.search(pattern, final_url)
-            if match:
-                file_id = match.group(1)
-                st.write(f"ID trouvé: {file_id}")
-                break
+        if file_id:
+            st.write(f"ID trouvé")
         
         # Étape 3: Essayer différentes méthodes de téléchargement
         image_data = None
         
-        # Méthode 1: Téléchargement direct via API OneDrive
-        if file_id:
-            # Nettoyer l'ID (enlever les caractères spéciaux)
-            file_id_clean = re.sub(r'[^a-fA-F0-9]', '', file_id)
-            if len(file_id_clean) >= 16:
-                download_urls = [
-                    f"https://api.onedrive.com/v1.0/shares/u!{file_id_clean}/root/content",
-                    f"https://onedrive.live.com/download?cid={file_id_clean[:16]}&resid={file_id_clean}&authkey=1",
-                    f"https://onedrive.live.com/download.aspx?cid={file_id_clean[:16]}&resid={file_id_clean}"
-                ]
+        # Méthode 1: Téléchargement direct
+        download_urls = [
+            # URL de téléchargement direct OneDrive
+            final_url.replace('/view', '/download'),
+            final_url.replace('/redir', '/download'),
+            final_url + '&download=1',
+            f"https://onedrive.live.com/download?cid={file_id}&resid={file_id}&authkey=1" if file_id else None,
+            f"https://api.onedrive.com/v1.0/shares/u!{file_id}/root/content" if file_id else None
+        ]
+        
+        # Filtrer les None
+        download_urls = [u for u in download_urls if u]
+        
+        for i, dl_url in enumerate(download_urls[:3]):  # Limiter à 3 essais
+            try:
+                st.write(f"Essai {i+1}...")
+                dl_response = session.get(dl_url, timeout=15, allow_redirects=True)
                 
-                for download_url in download_urls:
-                    try:
-                        st.write(f"Essai: {download_url[:50]}...")
-                        dl_response = session.get(download_url, timeout=15)
-                        if dl_response.status_code == 200:
-                            image_data = dl_response.content
-                            st.success(f"✅ Téléchargé via {download_url[:30]}...")
+                if dl_response.status_code == 200:
+                    # Vérifier si c'est une image (par les premiers octets)
+                    content = dl_response.content
+                    if len(content) > 100:
+                        # Vérifier les signatures d'images
+                        if (content.startswith(b'\xff\xd8\xff') or  # JPEG
+                            content.startswith(b'\x89PNG') or       # PNG
+                            content.startswith(b'GIF') or           # GIF
+                            content.startswith(b'RIFF')):           # WEBP
+                            image_data = content
+                            st.success(f"✅ Image téléchargée!")
                             break
-                    except:
-                        continue
-        
-        # Méthode 2: Utiliser l'URL de la page et chercher l'image
-        if not image_data:
-            st.write("🔍 Recherche de l'image dans la page...")
-            # Chercher les balises meta avec image
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Chercher les URLs d'images
-            img_tags = soup.find_all('img')
-            for img in img_tags:
-                src = img.get('src', '')
-                if 'thumbnail' in src or 'preview' in src:
-                    if src.startswith('http'):
-                        try:
-                            img_response = session.get(src, timeout=10)
-                            if img_response.status_code == 200 and len(img_response.content) > 1000:
-                                image_data = img_response.content
-                                st.success("✅ Image trouvée dans la page")
-                                break
-                        except:
-                            continue
-        
-        # Méthode 3: Redirection vers le téléchargement
-        if not image_data:
-            st.write("🔄 Tentative de redirection...")
-            # Ajouter /download à l'URL
-            download_attempts = [
-                final_url.replace('/view', '/download'),
-                final_url.replace('/redir', '/download'),
-                final_url + '&download=1'
-            ]
-            
-            for attempt in download_attempts:
-                try:
-                    dl_response = session.get(attempt, timeout=10, allow_redirects=True)
-                    if dl_response.status_code == 200 and len(dl_response.content) > 1000:
-                        # Vérifier si c'est une image
-                        content_type = dl_response.headers.get('content-type', '')
-                        if 'image' in content_type or dl_response.content[:4] in [b'\xff\xd8\xff', b'\x89PNG']:
-                            image_data = dl_response.content
-                            st.success("✅ Téléchargement réussi")
-                            break
-                except:
-                    continue
+            except:
+                continue
         
         if image_data:
             # Convertir en image
             try:
                 img = Image.open(BytesIO(image_data))
+                
                 # Convertir en format OpenCV (BGR)
                 img_array = np.array(img)
+                
                 if len(img_array.shape) == 3:
                     if img_array.shape[2] == 4:  # RGBA
                         img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
                     else:  # RGB
                         img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-                else:  # Grayscale
+                elif len(img_array.shape) == 2:  # Grayscale
                     img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
                 
                 return img_array
+                
             except Exception as e:
                 st.error(f"❌ Erreur de conversion: {str(e)}")
                 return None
         else:
-            st.error("❌ Impossible de télécharger l'image")
+            st.error("❌ Impossible de télécharger l'image. Utilisez plutôt l'upload direct.")
             return None
             
     except Exception as e:
@@ -307,58 +269,16 @@ def importer_depuis_onedrive():
     """Interface pour importer des photos depuis OneDrive"""
     st.subheader("☁️ Importer depuis OneDrive")
     
-    # Option 1: Lien de partage OneDrive (corrigée)
-    with st.expander("🔗 Importer par lien de partage", expanded=True):
+    # Option 1: Upload direct (RECOMMANDÉ)
+    with st.expander("📁 Upload direct (RECOMMANDÉ)", expanded=True):
+        st.success("✅ **Méthode la plus fiable**")
         st.markdown("""
-        1. Allez dans OneDrive
-        2. Cliquez droit sur l'image → **Partager**
-        3. Copiez le lien de partage
-        4. Collez-le ci-dessous
-        """)
-        
-        # Lien par défaut pour test (vous pouvez le retirer)
-        default_url = "https://1drv.ms/i/c/c61c18a26f827140/IQAc3HlBJEiVSp9rKGhkp14IARA6uxVtRLHXPK7VluOQlyA"
-        
-        onedrive_url = st.text_input(
-            "Lien de partage OneDrive:", 
-            value=default_url,
-            placeholder="https://1drv.ms/i/s!..."
-        )
-        
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("📥 Importer", use_container_width=True):
-                if onedrive_url:
-                    with st.spinner("⏳ Téléchargement en cours..."):
-                        image = telecharger_depuis_onedrive(onedrive_url)
-                        if image is not None:
-                            st.session_state.onedrive_image = image
-                            st.session_state.onedrive_image_loaded = True
-                            st.success("✅ Image importée avec succès!")
-                            st.rerun()
-        
-        with col2:
-            if st.button("🔧 Aide - Comment obtenir le lien", use_container_width=True):
-                st.info("""
-                **Pour obtenir un lien de partage :**
-                1. Sur OneDrive web, cliquez droit sur l'image
-                2. Sélectionnez **Partager**
-                3. Cliquez sur **Copier le lien**
-                4. Collez le lien dans le champ ci-dessus
-                
-                Le lien devrait ressembler à : `https://1drv.ms/i/s!...`
-                """)
-    
-    # Option 2: Upload direct
-    with st.expander("📁 Upload direct (recommandé)", expanded=True):
-        st.markdown("""
-        **Méthode la plus simple :**
-        - Téléchargez d'abord l'image depuis OneDrive sur votre PC
-        - Puis glissez-déposez-la ici
+        1. **Téléchargez d'abord l'image** depuis OneDrive sur votre PC
+        2. **Glissez-déposez** l'image ci-dessous
         """)
         
         uploaded_file = st.file_uploader(
-            "Choisir une image",
+            "Choisir une image (jpg, png, etc.)",
             type=['jpg', 'jpeg', 'png', 'gif', 'bmp'],
             key="onedrive_upload",
             help="Téléchargez d'abord l'image depuis OneDrive sur votre PC"
@@ -371,15 +291,39 @@ def importer_depuis_onedrive():
             st.success(f"✅ Image chargée: {uploaded_file.name}")
             st.rerun()
     
-    # Option 3: Guide pour OneDrive mobile
-    with st.expander("📱 Depuis l'application mobile OneDrive"):
+    # Option 2: Lien de partage (moins fiable)
+    with st.expander("🔗 Alternative: Lien de partage OneDrive"):
+        st.warning("⚠️ Cette méthode peut ne pas fonctionner selon les permissions")
+        st.markdown("""
+        1. Dans OneDrive, cliquez droit sur l'image → **Partager**
+        2. Copiez le lien
+        3. Collez-le ci-dessous
+        """)
+        
+        onedrive_url = st.text_input(
+            "Lien de partage:", 
+            placeholder="https://1drv.ms/i/s!..."
+        )
+        
+        if st.button("📥 Tenter l'import par lien", use_container_width=True):
+            if onedrive_url:
+                with st.spinner("⏳ Tentative de téléchargement..."):
+                    image = telecharger_depuis_onedrive(onedrive_url)
+                    if image is not None:
+                        st.session_state.onedrive_image = image
+                        st.session_state.onedrive_image_loaded = True
+                        st.success("✅ Image importée!")
+                        st.rerun()
+    
+    # Option 3: Guide mobile
+    with st.expander("📱 Depuis un téléphone"):
         st.markdown("""
         **Sur votre téléphone :**
-        1. Ouvrez l'application OneDrive
+        1. Ouvrez OneDrive
         2. Trouvez votre photo
         3. Tapez sur les **3 points** → **Exporter** → **Enregistrer sur l'appareil**
         4. Transférez la photo sur ce PC (USB, email, etc.)
-        5. Utilisez l'option **Upload direct** ci-dessus
+        5. Utilisez **Upload direct** ci-dessus
         """)
     
     # Afficher l'image chargée
@@ -387,14 +331,14 @@ def importer_depuis_onedrive():
         st.markdown("---")
         st.subheader("📸 Image importée")
         
-        # Afficher un aperçu
+        # Aperçu
         st.image(cv2.cvtColor(st.session_state.onedrive_image, cv2.COLOR_BGR2RGB), 
-                caption="Aperçu de l'image", width=300)
+                caption="Aperçu", width=300)
         
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔍 Analyser cette image", use_container_width=True):
-                with st.spinner("🔍 Analyse en cours..."):
+                with st.spinner("🔍 Analyse..."):
                     frame = st.session_state.onedrive_image
                     resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(frame)
                     st.session_state.frame_count += 1
@@ -404,21 +348,16 @@ def importer_depuis_onedrive():
                     col_img1, col_img2 = st.columns(2)
                     with col_img1:
                         st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
-                                caption="☁️ Image OneDrive", use_column_width=True)
+                                caption="Originale", use_column_width=True)
                     with col_img2:
                         st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
-                                caption=f"🎯 {total_actuel} pièces détectées", use_column_width=True)
+                                caption=f"Analysée", use_column_width=True)
                     
-                    # Résultats
-                    st.subheader("📊 Résultats")
-                    col_r1, col_r2 = st.columns(2)
-                    with col_r1:
-                        st.write("**Couleurs:**", dict(stats_couleur))
-                    with col_r2:
-                        st.write("**Tailles:**", dict(stats_taille))
+                    st.write("**Couleurs:**", dict(stats_couleur))
+                    st.write("**Tailles:**", dict(stats_taille))
         
         with col2:
-            if st.button("🗑️ Effacer l'image", use_container_width=True):
+            if st.button("🗑️ Effacer", use_column_width=True):
                 st.session_state.onedrive_image = None
                 st.session_state.onedrive_image_loaded = False
                 st.rerun()
@@ -744,8 +683,8 @@ else:
 # Pied de page commun
 st.markdown("---")
 st.caption("""
-🧩 Compteur de Pièces v3.2 - Interface Adaptative avec OneDrive
+🧩 Compteur de Pièces v3.3 - Interface Adaptative avec OneDrive
 • S'adapte automatiquement à votre appareil (mobile/PC)
-• Importez vos photos depuis OneDrive (lien de partage)
+• Upload direct recommandé pour OneDrive
 • Interface optimisée pour chaque type d'écran
 """)
