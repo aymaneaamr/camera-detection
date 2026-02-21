@@ -10,6 +10,8 @@ import pandas as pd
 from datetime import datetime
 import json
 import os
+import base64
+from io import BytesIO
 
 # Configuration de la page
 st.set_page_config(
@@ -60,7 +62,7 @@ class CompteurPieces:
         self.stats_couleur_total = defaultdict(int)
         self.stats_taille_total = defaultdict(int)
         self.total_pieces_cumule = 0
-        self.historique_photos = []
+        self.historique_photos = []  # Chaque élément contient: timestamp, nom, stats, image_originale, image_analyse, pieces_detaillees
         self.inventaire_total = defaultdict(lambda: defaultdict(int))
     
     def get_couleur_piece(self, hsv, contour):
@@ -120,6 +122,8 @@ class CompteurPieces:
         stats_couleur_actuelles = defaultdict(int)
         stats_taille_actuelles = defaultdict(int)
         
+        details_pieces = []  # Pour stocker les détails sans les contours OpenCV
+        
         for contour in contours:
             aire = cv2.contourArea(contour)
             if aire < 200:
@@ -130,6 +134,15 @@ class CompteurPieces:
             
             couleur_nom, couleur_bbox = self.get_couleur_piece(hsv, contour)
             taille_nom = self.get_taille_piece(aire)
+            
+            piece_info = {
+                'aire': float(aire),
+                'bbox': [int(x), int(y), int(w), int(h)],
+                'couleur': couleur_nom,
+                'taille': taille_nom,
+                'centre': [int(centre[0]), int(centre[1])]
+            }
+            details_pieces.append(piece_info)
             
             pieces_actuelles.append({
                 'contour': contour,
@@ -161,19 +174,30 @@ class CompteurPieces:
         cv2.putText(resultat, f"Total: {total_actuel}", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         
-        return resultat, pieces_actuelles, stats_couleur_actuelles, stats_taille_actuelles, total_actuel
+        return resultat, pieces_actuelles, stats_couleur_actuelles, stats_taille_actuelles, total_actuel, details_pieces
     
-    def ajouter_photo_analyse(self, stats_couleur, stats_taille, total_actuel, nom_photo=""):
-        """Ajoute les résultats d'une photo à l'inventaire cumulé"""
+    def ajouter_photo_analyse(self, frame_original, frame_analyse, stats_couleur, stats_taille, total_actuel, details_pieces, nom_photo=""):
+        """Ajoute les résultats d'une photo à l'inventaire avec sauvegarde des images"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Convertir les images en base64 pour les stocker dans la session
+        _, buffer_original = cv2.imencode('.jpg', frame_original)
+        _, buffer_analyse = cv2.imencode('.jpg', frame_analyse)
+        
+        img_original_base64 = base64.b64encode(buffer_original).decode('utf-8')
+        img_analyse_base64 = base64.b64encode(buffer_analyse).decode('utf-8')
         
         # Créer l'entrée pour l'historique
         entree_photo = {
+            'id': len(self.historique_photos),
             'timestamp': timestamp,
             'nom_photo': nom_photo if nom_photo else f"Photo_{len(self.historique_photos)+1}",
             'total_pieces': total_actuel,
             'stats_couleur': dict(stats_couleur),
-            'stats_taille': dict(stats_taille)
+            'stats_taille': dict(stats_taille),
+            'details_pieces': details_pieces,
+            'image_originale': img_original_base64,
+            'image_analyse': img_analyse_base64
         }
         
         self.historique_photos.append(entree_photo)
@@ -181,7 +205,7 @@ class CompteurPieces:
         # Mettre à jour les totaux cumulés
         for couleur, count in stats_couleur.items():
             self.stats_couleur_total[couleur] += count
-            # Mettre à jour l'inventaire par taille et couleur
+            # Répartition approximative par taille (simplifiée)
             for taille, count_taille in stats_taille.items():
                 if count_taille > 0:
                     self.inventaire_total[couleur][taille] += count // max(1, len([t for t in stats_taille.values() if t > 0]))
@@ -192,6 +216,45 @@ class CompteurPieces:
         self.total_pieces_cumule += total_actuel
         
         return entree_photo
+    
+    def get_photo_by_id(self, photo_id):
+        """Récupère une photo par son ID"""
+        if 0 <= photo_id < len(self.historique_photos):
+            return self.historique_photos[photo_id]
+        return None
+    
+    def get_photo_by_index(self, index):
+        """Récupère une photo par son index (négatif pour compter depuis la fin)"""
+        if abs(index) < len(self.historique_photos):
+            return self.historique_photos[index]
+        return None
+    
+    def supprimer_photo(self, photo_id):
+        """Supprime une photo de l'historique et met à jour l'inventaire"""
+        if 0 <= photo_id < len(self.historique_photos):
+            photo = self.historique_photos[photo_id]
+            
+            # Soustraire les statistiques
+            for couleur, count in photo['stats_couleur'].items():
+                self.stats_couleur_total[couleur] -= count
+                for taille in photo['stats_taille']:
+                    if photo['stats_taille'][taille] > 0:
+                        self.inventaire_total[couleur][taille] -= count // max(1, len([t for t in photo['stats_taille'].values() if t > 0]))
+            
+            for taille, count in photo['stats_taille'].items():
+                self.stats_taille_total[taille] -= count
+            
+            self.total_pieces_cumule -= photo['total_pieces']
+            
+            # Supprimer la photo
+            del self.historique_photos[photo_id]
+            
+            # Réindexer les IDs
+            for i, p in enumerate(self.historique_photos):
+                p['id'] = i
+            
+            return True
+        return False
     
     def get_inventaire_dataframe(self):
         """Retourne l'inventaire sous forme de DataFrame"""
@@ -209,12 +272,15 @@ class CompteurPieces:
         return pd.DataFrame(data)
     
     def exporter_inventaire_json(self):
-        """Exporte l'inventaire au format JSON"""
+        """Exporte l'inventaire au format JSON (sans les images pour alléger)"""
         inventaire = {
             'total_pieces_cumule': self.total_pieces_cumule,
             'stats_couleur_total': dict(self.stats_couleur_total),
             'stats_taille_total': dict(self.stats_taille_total),
-            'historique_photos': self.historique_photos,
+            'historique_photos': [
+                {k: v for k, v in photo.items() if k not in ['image_originale', 'image_analyse']}
+                for photo in self.historique_photos
+            ],
             'inventaire_detail': {
                 couleur: dict(taille) for couleur, taille in self.inventaire_total.items()
             },
@@ -229,8 +295,16 @@ class VideoProcessor(VideoProcessorBase):
     
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        resultat, _, _, _, _ = self.compteur.traiter_frame(img)
+        resultat, _, _, _, _, _ = self.compteur.traiter_frame(img)
         return av.VideoFrame.from_ndarray(resultat, format="bgr24")
+
+# Fonction pour décoder l'image base64
+def base64_to_image(base64_string):
+    """Convertit une chaîne base64 en image OpenCV"""
+    img_data = base64.b64decode(base64_string)
+    nparr = np.frombuffer(img_data, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    return img
 
 # Initialisation du compteur dans la session
 if 'compteur' not in st.session_state:
@@ -241,6 +315,10 @@ if 'mode' not in st.session_state:
     st.session_state.mode = None
 if 'derniere_analyse' not in st.session_state:
     st.session_state.derniere_analyse = None
+if 'photo_selectionnee' not in st.session_state:
+    st.session_state.photo_selectionnee = None
+if 'mode_verification' not in st.session_state:
+    st.session_state.mode_verification = False
 
 compteur = st.session_state.compteur
 
@@ -250,6 +328,7 @@ st.markdown("""
 Cette application permet de gérer l'inventaire de votre entrepôt :
 - **Détection automatique** des pièces par couleur et taille
 - **Accumulation des résultats** de plusieurs photos
+- **Vérification des photos** à tout moment
 - **Suivi d'inventaire** en temps réel
 - **Export des données** pour votre système de gestion
 """)
@@ -277,8 +356,8 @@ if st.session_state.mode == "mobile":
     # ========== INTERFACE MOBILE (TÉLÉPHONE) ==========
     st.info("📱 Mode téléphone détecté - Interface optimisée pour mobile")
     
-    # Interface simplifiée pour mobile avec onglets
-    tab1, tab2, tab3 = st.tabs(["📸 Analyse", "📊 Inventaire", "⚙️ Paramètres"])
+    # Interface avec onglets
+    tab1, tab2, tab3, tab4 = st.tabs(["📸 Analyse", "📊 Inventaire", "🔍 Vérification", "⚙️ Paramètres"])
     
     with tab1:
         st.subheader("📸 Prendre une photo")
@@ -289,7 +368,8 @@ if st.session_state.mode == "mobile":
             source = st.radio(
                 "Source",
                 ["📸 Caméra", "🖼️ Galerie", "🧪 Démo"],
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                key="mobile_source"
             )
         
         with col2:
@@ -303,10 +383,10 @@ if st.session_state.mode == "mobile":
                     bytes_data = img_file.getvalue()
                     frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                     
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(frame)
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel, details = compteur.traiter_frame(frame)
                     
-                    # Ajouter à l'inventaire
-                    entree = compteur.ajouter_photo_analyse(stats_couleur, stats_taille, total_actuel, nom_photo)
+                    # Ajouter à l'inventaire avec les images
+                    entree = compteur.ajouter_photo_analyse(frame, resultat, stats_couleur, stats_taille, total_actuel, details, nom_photo)
                     st.session_state.derniere_analyse = entree
                     
                     st.success(f"✅ **{total_actuel} pièces** ajoutées à l'inventaire")
@@ -319,17 +399,17 @@ if st.session_state.mode == "mobile":
                     st.write("**Tailles:** " + ", ".join([f"{t}:{stats_taille.get(t,0)}" for t in ['P','M','G','TG'] if stats_taille.get(t,0)>0]))
         
         elif source == "🖼️ Galerie":
-            uploaded_file = st.file_uploader("Choisir image", type=['jpg', 'jpeg', 'png'], label_visibility="collapsed")
+            uploaded_file = st.file_uploader("Choisir image", type=['jpg', 'jpeg', 'png'], label_visibility="collapsed", key="mobile_upload")
             
             if uploaded_file:
                 with st.spinner("🔍 Analyse..."):
                     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
                     frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                     
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(frame)
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel, details = compteur.traiter_frame(frame)
                     
                     # Ajouter à l'inventaire
-                    entree = compteur.ajouter_photo_analyse(stats_couleur, stats_taille, total_actuel, nom_photo)
+                    entree = compteur.ajouter_photo_analyse(frame, resultat, stats_couleur, stats_taille, total_actuel, details, nom_photo or uploaded_file.name)
                     st.session_state.derniere_analyse = entree
                     
                     st.success(f"✅ **{total_actuel} pièces** ajoutées à l'inventaire")
@@ -346,10 +426,10 @@ if st.session_state.mode == "mobile":
                     cv2.circle(test_img, (500, 200), 45, (0, 255, 0), -1)
                     cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)
                     
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(test_img)
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel, details = compteur.traiter_frame(test_img)
                     
                     # Ajouter à l'inventaire
-                    entree = compteur.ajouter_photo_analyse(stats_couleur, stats_taille, total_actuel, "Mode démo")
+                    entree = compteur.ajouter_photo_analyse(test_img, resultat, stats_couleur, stats_taille, total_actuel, details, "Mode démo")
                     st.session_state.derniere_analyse = entree
                     
                     st.success(f"✅ **{total_actuel} pièces** ajoutées à l'inventaire")
@@ -365,7 +445,8 @@ if st.session_state.mode == "mobile":
         with col_m2:
             st.metric("Total pièces", compteur.total_pieces_cumule)
         with col_m3:
-            st.metric("Dernier ajout", compteur.historique_photos[-1]['total_pieces'] if compteur.historique_photos else 0)
+            dernier = compteur.historique_photos[-1]['total_pieces'] if compteur.historique_photos else 0
+            st.metric("Dernier ajout", dernier)
         
         # Tableau d'inventaire
         st.write("**📦 Inventaire par couleur et taille:**")
@@ -381,35 +462,71 @@ if st.session_state.mode == "mobile":
                 if count > 0:
                     with cols[i % len(cols)]:
                         st.metric(couleur.capitalize(), count)
-        
-        # Historique des photos
-        with st.expander("📜 Historique des analyses"):
-            for i, photo in enumerate(reversed(compteur.historique_photos[-10:]), 1):
-                st.write(f"{i}. {photo['timestamp']} - {photo['nom_photo']}: {photo['total_pieces']} pièces")
-                st.caption(f"   Couleurs: {photo['stats_couleur']}")
-        
-        # Boutons d'export
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            if st.button("📥 Exporter CSV", use_container_width=True):
-                csv = df_inventaire.to_csv(index=False)
-                st.download_button(
-                    label="Télécharger CSV",
-                    data=csv,
-                    file_name=f"inventaire_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
-        with col_b2:
-            if st.button("📤 Exporter JSON", use_container_width=True):
-                json_data = compteur.exporter_inventaire_json()
-                st.download_button(
-                    label="Télécharger JSON",
-                    data=json_data,
-                    file_name=f"inventaire_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
     
     with tab3:
+        st.subheader("🔍 Vérification des photos")
+        
+        if compteur.historique_photos:
+            # Sélecteur de photo
+            photo_options = [f"{p['id']+1}. {p['timestamp']} - {p['nom_photo']} ({p['total_pieces']} pièces)" 
+                            for p in compteur.historique_photos]
+            
+            selected_idx = st.selectbox(
+                "Sélectionner une photo à vérifier",
+                options=range(len(photo_options)),
+                format_func=lambda x: photo_options[x],
+                key="mobile_photo_select"
+            )
+            
+            if selected_idx is not None:
+                photo = compteur.historique_photos[selected_idx]
+                
+                # Afficher les images
+                col_img1, col_img2 = st.columns(2)
+                
+                with col_img1:
+                    st.caption("📸 Image originale")
+                    img_originale = base64_to_image(photo['image_originale'])
+                    st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
+                
+                with col_img2:
+                    st.caption(f"🔍 Analyse - {photo['total_pieces']} pièces")
+                    img_analyse = base64_to_image(photo['image_analyse'])
+                    st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
+                
+                # Détails de la photo
+                with st.expander("📊 Détails de l'analyse"):
+                    st.write(f"**Date:** {photo['timestamp']}")
+                    st.write(f"**Lot:** {photo['nom_photo']}")
+                    st.write(f"**Total pièces:** {photo['total_pieces']}")
+                    
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.write("**Couleurs:**")
+                        for couleur, count in photo['stats_couleur'].items():
+                            if count > 0:
+                                st.write(f"- {couleur}: {count}")
+                    
+                    with col_d2:
+                        st.write("**Tailles:**")
+                        for taille, count in photo['stats_taille'].items():
+                            if count > 0:
+                                st.write(f"- {taille}: {count}")
+                
+                # Liste détaillée des pièces
+                with st.expander("🔍 Détail des pièces"):
+                    for i, piece in enumerate(photo['details_pieces'], 1):
+                        st.write(f"Pièce #{i}: {piece['couleur']} - {piece['taille']} (aire: {piece['aire']:.0f} px)")
+                
+                # Option de suppression
+                if st.button("🗑️ Supprimer cette photo de l'inventaire", use_container_width=True, type="primary"):
+                    if compteur.supprimer_photo(selected_idx):
+                        st.success(f"✅ Photo supprimée de l'inventaire")
+                        st.rerun()
+        else:
+            st.info("📸 Aucune photo dans l'historique. Commencez par analyser des photos.")
+    
+    with tab4:
         st.subheader("⚙️ Configuration")
         
         if st.button("🔄 Réinitialiser l'inventaire", use_container_width=True, type="primary"):
@@ -426,7 +543,7 @@ if st.session_state.mode == "mobile":
 
 else:
     # ========== INTERFACE PC (ORDINATEUR) ==========
-    st.info("💻 Mode PC détecté - Interface complète avec gestion d'inventaire")
+    st.info("💻 Mode PC détecté - Interface complète avec vérification des photos")
     
     # Sidebar pour les paramètres et l'inventaire
     with st.sidebar:
@@ -457,7 +574,8 @@ else:
         
         source = st.radio(
             "Source d'analyse",
-            ["📸 Prendre une photo", "🎥 Flux en direct", "🖼️ Uploader une image", "🧪 Mode démo"]
+            ["📸 Prendre une photo", "🎥 Flux en direct", "🖼️ Uploader une image", "🧪 Mode démo"],
+            key="pc_source"
         )
         
         nom_lot = st.text_input("🏷️ Nom du lot", placeholder="ex: Lot A-123", key="nom_lot_pc")
@@ -483,7 +601,7 @@ else:
         """)
     
     # Zone principale PC avec onglets
-    tab_main1, tab_main2, tab_main3 = st.tabs(["🔍 Analyse", "📊 Inventaire complet", "📈 Statistiques"])
+    tab_main1, tab_main2, tab_main3, tab_main4 = st.tabs(["🔍 Analyse", "📊 Inventaire", "🔍 Vérification photos", "📈 Statistiques"])
     
     with tab_main1:
         if source == "📸 Prendre une photo":
@@ -498,10 +616,10 @@ else:
                     bytes_data = img_file.getvalue()
                     frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                     
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(frame)
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel, details = compteur.traiter_frame(frame)
                     
-                    # Ajouter à l'inventaire
-                    entree = compteur.ajouter_photo_analyse(stats_couleur, stats_taille, total_actuel, nom_lot)
+                    # Ajouter à l'inventaire avec les images
+                    entree = compteur.ajouter_photo_analyse(frame, resultat, stats_couleur, stats_taille, total_actuel, details, nom_lot)
                     st.session_state.derniere_analyse = entree
                     st.session_state.frame_count += 1
                     
@@ -527,26 +645,6 @@ else:
                         st.metric("Tailles différentes", len([t for t in stats_taille.values() if t > 0]))
                     with col_m4:
                         st.metric("Total inventaire", compteur.total_pieces_cumule)
-                    
-                    # Tableau des couleurs
-                    st.write("**🎨 Répartition par couleur :**")
-                    cols = st.columns(5)
-                    couleurs_list = ['rouge', 'bleu', 'vert', 'jaune', 'autre']
-                    color_emoji = {'rouge': '🔴', 'bleu': '🔵', 'vert': '🟢', 'jaune': '🟡', 'autre': '⚪'}
-                    
-                    for i, couleur in enumerate(couleurs_list):
-                        with cols[i]:
-                            count = stats_couleur.get(couleur if couleur != 'autre' else '?', 0)
-                            st.metric(f"{color_emoji[couleur]} {couleur}", count)
-                    
-                    # Tableau des tailles
-                    st.write("**📏 Répartition par taille :**")
-                    cols = st.columns(4)
-                    tailles_list = ['P', 'M', 'G', 'TG']
-                    for i, taille in enumerate(tailles_list):
-                        with cols[i]:
-                            count = stats_taille.get(taille, 0)
-                            st.metric(f"Taille {taille}", count)
         
         elif source == "🎥 Flux en direct":
             st.subheader("🎥 Flux vidéo en temps réel")
@@ -561,25 +659,21 @@ else:
                 media_stream_constraints={"video": True, "audio": False},
                 async_processing=True,
             )
-            
-            if ctx.state.playing:
-                if st.button("📸 Capturer et ajouter à l'inventaire"):
-                    st.info("Fonctionnalité à implémenter - Utilisez 'Prendre une photo' pour l'instant")
         
         elif source == "🖼️ Uploader une image":
             st.subheader("🖼️ Analyse d'image pour inventaire")
             
-            uploaded_file = st.file_uploader("Choisissez une image", type=['jpg', 'jpeg', 'png'])
+            uploaded_file = st.file_uploader("Choisissez une image", type=['jpg', 'jpeg', 'png'], key="pc_upload")
             
             if uploaded_file:
                 with st.spinner("🔍 Analyse en cours..."):
                     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
                     frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                     
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(frame)
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel, details = compteur.traiter_frame(frame)
                     
                     # Ajouter à l'inventaire
-                    entree = compteur.ajouter_photo_analyse(stats_couleur, stats_taille, total_actuel, nom_lot or uploaded_file.name)
+                    entree = compteur.ajouter_photo_analyse(frame, resultat, stats_couleur, stats_taille, total_actuel, details, nom_lot or uploaded_file.name)
                     st.session_state.derniere_analyse = entree
                     st.session_state.frame_count += 1
                     
@@ -608,10 +702,10 @@ else:
                     cv2.circle(test_img, (300, 350), 35, (0, 255, 255), -1)
                     cv2.circle(test_img, (450, 350), 60, (100, 100, 100), -1)
                     
-                    resultat, pieces, stats_couleur, stats_taille, total_actuel = compteur.traiter_frame(test_img)
+                    resultat, pieces, stats_couleur, stats_taille, total_actuel, details = compteur.traiter_frame(test_img)
                     
                     # Ajouter à l'inventaire
-                    entree = compteur.ajouter_photo_analyse(stats_couleur, stats_taille, total_actuel, "Mode démo")
+                    entree = compteur.ajouter_photo_analyse(test_img, resultat, stats_couleur, stats_taille, total_actuel, details, "Mode démo")
                     st.session_state.derniere_analyse = entree
                     st.session_state.frame_count += 1
                     
@@ -672,27 +766,9 @@ else:
                     with cols[i % len(cols)]:
                         st.metric(f"Taille {taille}", count, delta=f"{count/compteur.total_pieces_cumule*100:.1f}%" if compteur.total_pieces_cumule > 0 else "0%")
         
-        # Historique des analyses
-        st.write("### 📜 Historique des analyses")
-        if compteur.historique_photos:
-            # Créer un DataFrame pour l'historique
-            hist_data = []
-            for photo in compteur.historique_photos:
-                hist_data.append({
-                    'Date': photo['timestamp'],
-                    'Lot': photo['nom_photo'],
-                    'Pièces': photo['total_pieces'],
-                    'Détail': f"C:{sum(photo['stats_couleur'].values())} pièces"
-                })
-            
-            df_hist = pd.DataFrame(hist_data)
-            st.dataframe(df_hist, use_container_width=True, hide_index=True)
-        else:
-            st.info("Aucune analyse pour le moment")
-        
         # Boutons d'export
         st.write("### 📤 Export des données")
-        col_e1, col_e2, col_e3 = st.columns(3)
+        col_e1, col_e2 = st.columns(2)
         
         with col_e1:
             csv = df_inventaire.to_csv(index=False)
@@ -713,14 +789,158 @@ else:
                 mime="application/json",
                 use_container_width=True
             )
-        
-        with col_e3:
-            if st.button("🔄 Réinitialiser inventaire", use_container_width=True):
-                compteur.reset_compteur()
-                st.success("✅ Inventaire réinitialisé")
-                st.rerun()
     
     with tab_main3:
+        st.subheader("🔍 VÉRIFICATION DES PHOTOS")
+        
+        if compteur.historique_photos:
+            # Créer deux colonnes pour la sélection et l'affichage
+            col_select, col_preview = st.columns([1, 2])
+            
+            with col_select:
+                st.write("### Sélectionner une photo")
+                
+                # Options de tri
+                tri = st.radio("Trier par", ["Plus récent", "Plus ancien", "Nom", "Nombre de pièces"], horizontal=True)
+                
+                photos_affichees = compteur.historique_photos.copy()
+                if tri == "Plus récent":
+                    photos_affichees = list(reversed(photos_affichees))
+                elif tri == "Plus ancien":
+                    photos_affichees = photos_affichees
+                elif tri == "Nom":
+                    photos_affichees = sorted(photos_affichees, key=lambda x: x['nom_photo'])
+                elif tri == "Nombre de pièces":
+                    photos_affichees = sorted(photos_affichees, key=lambda x: x['total_pieces'], reverse=True)
+                
+                # Liste des photos avec miniatures
+                for i, photo in enumerate(photos_affichees):
+                    with st.container():
+                        col_mini1, col_mini2 = st.columns([1, 3])
+                        with col_mini1:
+                            # Afficher une miniature (réduite)
+                            img_originale = base64_to_image(photo['image_originale'])
+                            img_mini = cv2.resize(img_originale, (80, 60))
+                            st.image(cv2.cvtColor(img_mini, cv2.COLOR_BGR2RGB), use_column_width=True)
+                        
+                        with col_mini2:
+                            st.write(f"**{photo['nom_photo']}**")
+                            st.caption(f"{photo['timestamp']} - {photo['total_pieces']} pièces")
+                            
+                            if st.button(f"🔍 Voir", key=f"view_{photo['id']}", use_container_width=True):
+                                st.session_state.photo_selectionnee = photo['id']
+                                st.rerun()
+                        
+                        st.divider()
+            
+            with col_preview:
+                if st.session_state.photo_selectionnee is not None:
+                    photo = compteur.get_photo_by_id(st.session_state.photo_selectionnee)
+                    
+                    if photo:
+                        st.write(f"### 📸 {photo['nom_photo']}")
+                        st.caption(f"Date: {photo['timestamp']}")
+                        
+                        # Afficher les images côte à côte
+                        col_img1, col_img2 = st.columns(2)
+                        
+                        with col_img1:
+                            st.write("**Image originale**")
+                            img_originale = base64_to_image(photo['image_originale'])
+                            st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
+                        
+                        with col_img2:
+                            st.write(f"**Image analysée - {photo['total_pieces']} pièces**")
+                            img_analyse = base64_to_image(photo['image_analyse'])
+                            st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
+                        
+                        # Détails de l'analyse
+                        with st.expander("📊 Détails de l'analyse", expanded=True):
+                            col_d1, col_d2, col_d3 = st.columns(3)
+                            
+                            with col_d1:
+                                st.metric("Total pièces", photo['total_pieces'])
+                            
+                            with col_d2:
+                                st.write("**Couleurs:**")
+                                for couleur, count in photo['stats_couleur'].items():
+                                    if count > 0:
+                                        st.write(f"- {couleur}: {count}")
+                            
+                            with col_d3:
+                                st.write("**Tailles:**")
+                                for taille, count in photo['stats_taille'].items():
+                                    if count > 0:
+                                        st.write(f"- {taille}: {count}")
+                        
+                        # Liste détaillée des pièces
+                        with st.expander("🔍 Liste détaillée des pièces"):
+                            # Créer un DataFrame pour les pièces
+                            df_pieces = pd.DataFrame([
+                                {
+                                    'N°': i+1,
+                                    'Couleur': p['couleur'],
+                                    'Taille': p['taille'],
+                                    'Aire (px)': f"{p['aire']:.0f}",
+                                    'Position': f"({p['bbox'][0]}, {p['bbox'][1]})"
+                                }
+                                for i, p in enumerate(photo['details_pieces'])
+                            ])
+                            st.dataframe(df_pieces, use_container_width=True, hide_index=True)
+                        
+                        # Boutons d'action
+                        col_b1, col_b2, col_b3 = st.columns(3)
+                        
+                        with col_b1:
+                            if st.button("⬅️ Retour à la liste", use_container_width=True):
+                                st.session_state.photo_selectionnee = None
+                                st.rerun()
+                        
+                        with col_b2:
+                            if st.button("🗑️ Supprimer cette photo", use_container_width=True, type="primary"):
+                                if compteur.supprimer_photo(photo['id']):
+                                    st.success("✅ Photo supprimée de l'inventaire")
+                                    st.session_state.photo_selectionnee = None
+                                    st.rerun()
+                        
+                        with col_b3:
+                            # Exporter cette photo individuellement
+                            photo_data = {
+                                'photo': {k: v for k, v in photo.items() if k not in ['image_originale', 'image_analyse']},
+                                'date_export': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            }
+                            photo_json = json.dumps(photo_data, indent=2)
+                            st.download_button(
+                                label="📥 Exporter cette photo",
+                                data=photo_json,
+                                file_name=f"photo_{photo['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json",
+                                use_container_width=True
+                            )
+                    else:
+                        st.info("Photo non trouvée")
+                        if st.button("Retour à la liste"):
+                            st.session_state.photo_selectionnee = None
+                            st.rerun()
+                else:
+                    st.info("👈 Sélectionnez une photo dans la liste pour la vérifier")
+                    
+                    # Aperçu rapide des dernières photos
+                    st.write("### 📸 Dernières photos ajoutées")
+                    cols = st.columns(3)
+                    for i, photo in enumerate(reversed(compteur.historique_photos[-6:])):
+                        with cols[i % 3]:
+                            img_originale = base64_to_image(photo['image_originale'])
+                            img_mini = cv2.resize(img_originale, (150, 120))
+                            st.image(cv2.cvtColor(img_mini, cv2.COLOR_BGR2RGB), use_column_width=True)
+                            st.caption(f"{photo['nom_photo']} - {photo['total_pieces']} pièces")
+                            if st.button(f"Voir", key=f"quickview_{photo['id']}"):
+                                st.session_state.photo_selectionnee = photo['id']
+                                st.rerun()
+        else:
+            st.info("📸 Aucune photo dans l'historique. Commencez par analyser des photos dans l'onglet 'Analyse'.")
+    
+    with tab_main4:
         st.subheader("📈 Statistiques et Analyses")
         
         if compteur.historique_photos:
@@ -779,10 +999,13 @@ else:
 
 # Pied de page commun
 st.markdown("---")
-col_f1, col_f2, col_f3 = st.columns(3)
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 with col_f1:
-    st.caption(f"🏭 Inventaire Entrepôt v4.0")
+    st.caption(f"🏭 Inventaire Entrepôt v5.0")
 with col_f2:
-    st.caption(f"📸 Photos analysées: {len(compteur.historique_photos)}")
+    st.caption(f"📸 Photos: {len(compteur.historique_photos)}")
 with col_f3:
-    st.caption(f"🧩 Total pièces: {compteur.total_pieces_cumule}")
+    st.caption(f"🧩 Total: {compteur.total_pieces_cumule}")
+with col_f4:
+    if compteur.historique_photos:
+        st.caption(f"🆕 Dernière: {compteur.historique_photos[-1]['timestamp'][:10]}")
