@@ -1,7 +1,6 @@
 import streamlit as st
 import cv2
 import numpy as np
-from collections import defaultdict
 import pandas as pd
 from datetime import datetime
 import json
@@ -10,6 +9,7 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 import re
+from pyzbar.pyzbar import decode
 
 # Configuration de la page
 st.set_page_config(
@@ -213,6 +213,44 @@ class GestionnairePieces:
         """Réinitialise complètement l'inventaire"""
         self.pieces = {}
 
+def detecter_code_barre(image):
+    """
+    Détecte et lit les codes-barres dans une image
+    Retourne l'image annotée et la liste des codes détectés
+    """
+    resultat = image.copy()
+    codes_detectes = []
+    
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Décoder les codes-barres
+    codes = decode(gray)
+    
+    for code in codes:
+        # Extraire les données
+        data = code.data.decode('utf-8')
+        type_code = code.type
+        
+        # Dessiner le rectangle autour du code
+        points = code.polygon
+        if len(points) == 4:
+            pts = np.array([(p.x, p.y) for p in points], np.int32)
+            pts = pts.reshape((-1, 1, 2))
+            cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
+        
+        # Ajouter le texte
+        cv2.putText(resultat, f"{type_code}: {data}", 
+                   (code.rect.left, code.rect.top - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        codes_detectes.append({
+            'data': data,
+            'type': type_code
+        })
+    
+    return resultat, codes_detectes
+
 def detecter_pieces(image):
     """Détecte et compte les pièces dans une image"""
     resultat = image.copy()
@@ -262,12 +300,6 @@ def base64_to_image(base64_string):
     nparr = np.frombuffer(img_data, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
-
-def formater_nom_piece(code):
-    """Formate le code en nom de pièce lisible"""
-    # Supprimer les caractères spéciaux
-    nom = re.sub(r'[^\w\s-]', '', code)
-    return nom
 
 # Initialisation
 if 'gestionnaire' not in st.session_state:
@@ -340,7 +372,6 @@ with st.sidebar:
                 gestionnaire.reinitialiser_tout()
                 st.session_state.page = "saisie"
                 st.session_state.piece_selectionnee = None
-                st.session_state.code_detecte = None
                 st.rerun()
     else:
         st.info("Aucune pièce pour le moment")
@@ -365,23 +396,37 @@ if st.session_state.page == "saisie":
                 bytes_data = img_barcode.getvalue()
                 frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 
-                # ICI : Vous devez implémenter la vraie détection de code-barres
-                # Pour l'instant, on utilise un champ de saisie manuelle
-                st.warning("⚠️ La détection automatique n'est pas encore configurée")
+                # Détection réelle du code-barres
+                image_annotee, codes = detecter_code_barre(frame)
                 
-                # Champ de saisie manuelle du code
-                code_manuel = st.text_input("Entrez le code manuellement", key="code_manuel_camera")
-                if code_manuel:
-                    st.session_state.code_detecte = code_manuel
-                    st.session_state.nom_propose = code_manuel  # Utiliser le code exact comme nom
+                if codes:
+                    # Prendre le premier code détecté
+                    code_trouve = codes[0]['data']
+                    st.session_state.code_detecte = code_trouve
+                    st.session_state.nom_propose = code_trouve
                     st.session_state.scan_effectue = True
+                    
+                    # Afficher l'image avec le code détecté
+                    st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                            caption="Code-barres détecté", use_container_width=True)
                     
                     st.markdown(f"""
                     <div class="success-box">
-                        <h4>✅ Code enregistré !</h4>
-                        <div class="code-display">{code_manuel}</div>
+                        <h4>✅ Code-barres détecté !</h4>
+                        <div class="code-display">{code_trouve}</div>
+                        <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
+                else:
+                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+                    
+                    # Option de saisie manuelle en cas d'échec
+                    code_manuel = st.text_input("Ou entrez le code manuellement", key="code_manuel_camera_fallback")
+                    if code_manuel:
+                        st.session_state.code_detecte = code_manuel
+                        st.session_state.nom_propose = code_manuel
+                        st.session_state.scan_effectue = True
+                        st.rerun()
     
     else:  # Upload
         uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
@@ -390,26 +435,37 @@ if st.session_state.page == "saisie":
                 file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
                 frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                 
-                # ICI : Vous devez implémenter la vraie détection de code-barres
-                st.warning("⚠️ La détection automatique n'est pas encore configurée")
+                # Détection réelle du code-barres
+                image_annotee, codes = detecter_code_barre(frame)
                 
                 # Afficher l'image
-                st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
-                        caption="Image chargée", use_container_width=True)
+                st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                        caption="Image analysée", use_container_width=True)
                 
-                # Champ de saisie manuelle du code
-                code_manuel = st.text_input("Entrez le code manuellement", key="code_manuel_upload")
-                if code_manuel:
-                    st.session_state.code_detecte = code_manuel
-                    st.session_state.nom_propose = code_manuel  # Utiliser le code exact comme nom
+                if codes:
+                    # Prendre le premier code détecté
+                    code_trouve = codes[0]['data']
+                    st.session_state.code_detecte = code_trouve
+                    st.session_state.nom_propose = code_trouve
                     st.session_state.scan_effectue = True
                     
                     st.markdown(f"""
                     <div class="success-box">
-                        <h4>✅ Code enregistré !</h4>
-                        <div class="code-display">{code_manuel}</div>
+                        <h4>✅ Code-barres détecté !</h4>
+                        <div class="code-display">{code_trouve}</div>
+                        <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
+                else:
+                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+                    
+                    # Option de saisie manuelle en cas d'échec
+                    code_manuel = st.text_input("Ou entrez le code manuellement", key="code_manuel_upload_fallback")
+                    if code_manuel:
+                        st.session_state.code_detecte = code_manuel
+                        st.session_state.nom_propose = code_manuel
+                        st.session_state.scan_effectue = True
+                        st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -426,7 +482,6 @@ if st.session_state.page == "saisie":
     st.markdown("### 📝 Informations de la pièce")
     
     with st.form("nouvelle_piece_form"):
-        # Afficher le code détecté s'il existe
         if st.session_state.code_detecte:
             st.markdown(f"""
             <div class="barcode-result">
@@ -436,29 +491,17 @@ if st.session_state.page == "saisie":
             """, unsafe_allow_html=True)
             
             nom_piece = st.text_input(
-                "Nom de la pièce (modifiable)",
-                value=st.session_state.code_detecte,  # Utiliser le code exact comme valeur par défaut
+                "Nom de la pièce",
+                value=st.session_state.code_detecte,
                 placeholder="Nom de la pièce",
                 key="nom_piece_input"
             )
-            
-            # Option pour utiliser le code comme nom
-            if st.checkbox("Utiliser le code comme nom exact", value=True):
-                nom_piece = st.session_state.code_detecte
-                st.info(f"Le nom sera : {nom_piece}")
         else:
             nom_piece = st.text_input(
                 "Nom de la pièce",
                 placeholder="Ex: Vis M8, Écrou, Rondelle...",
                 key="nom_piece_input"
             )
-            
-            # Option pour entrer un code manuellement
-            code_manuel = st.text_input("Ou entrez un code manuellement", placeholder="Ex: 10206040")
-            if code_manuel:
-                st.session_state.code_detecte = code_manuel
-                st.session_state.nom_propose = code_manuel
-                st.info(f"✨ Code enregistré: {code_manuel}")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -481,7 +524,44 @@ if st.session_state.page == "saisie":
         else:
             st.error("❌ Veuillez entrer un nom de pièce")
 
-# ... (le reste du code pour les pages "details" et "photo_detail" reste identique)
+elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
+    # Page de détails d'une pièce (identique à votre code existant)
+    nom_piece = st.session_state.piece_selectionnee
+    photos = gestionnaire.get_photos_piece(nom_piece)
+    total = gestionnaire.get_total_piece(nom_piece)
+    
+    # En-tête
+    col_h1, col_h2, col_h3 = st.columns([2, 1, 1])
+    with col_h1:
+        st.header(f"📦 {nom_piece}")
+    with col_h2:
+        st.metric("Total pièces", total)
+    with col_h3:
+        st.metric("Photos", len(photos))
+    
+    # Options
+    col_o1, col_o2, col_o3 = st.columns(3)
+    with col_o1:
+        if st.button("⬅️ Retour à la saisie", use_container_width=True):
+            st.session_state.page = "saisie"
+            st.rerun()
+    with col_o2:
+        if st.button("📸 Ajouter une photo", use_container_width=True):
+            st.session_state.ajout_photo = True
+    with col_o3:
+        if st.button("🗑️ Supprimer cette pièce", use_container_width=True, type="primary"):
+            if gestionnaire.supprimer_piece(nom_piece):
+                st.success(f"✅ Pièce supprimée")
+                st.session_state.page = "saisie"
+                st.rerun()
+    
+    st.divider()
+    
+    # Ajout de photo (identique à votre code existant)
+    # ... (copiez votre code existant pour l'ajout de photo)
+    
+    # Affichage des photos (identique à votre code existant)
+    # ... (copiez votre code existant pour l'affichage des photos)
 
 # Pied de page
 st.markdown("---")
