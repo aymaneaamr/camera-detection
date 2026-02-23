@@ -6,4 +6,4 @@ streamlit-webrtc>=0.47
 av>=10.0.0
 openpyxl
 plotly>=5.18.0
-pyzbar>=0.1.9
+pyzbar==0.1.9
