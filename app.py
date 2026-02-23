@@ -386,7 +386,7 @@ if st.session_state.page == "saisie":
     
     if scan_option == "📸 Caméra":
         img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
-        if img_barcode and not st.session_state.scan_effectue:
+        if img_barcode:
             with st.spinner("🔍 Analyse du code-barres..."):
                 bytes_data = img_barcode.getvalue()
                 frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
@@ -413,17 +413,10 @@ if st.session_state.page == "saisie":
                     """, unsafe_allow_html=True)
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-                    
-                    # Option de saisie manuelle en cas d'échec
-                    code_manuel = st.text_input("Ou entrez le code manuellement", key="code_manuel_camera")
-                    if code_manuel:
-                        st.session_state.code_detecte = code_manuel
-                        st.session_state.scan_effectue = True
-                        st.rerun()
     
     else:  # Upload
         uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
-        if uploaded_barcode and not st.session_state.scan_effectue:
+        if uploaded_barcode:
             with st.spinner("🔍 Analyse du code-barres..."):
                 file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
                 frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
@@ -449,12 +442,6 @@ if st.session_state.page == "saisie":
                     """, unsafe_allow_html=True)
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-                    
-                    code_manuel = st.text_input("Ou entrez le code manuellement", key="code_manuel_upload")
-                    if code_manuel:
-                        st.session_state.code_detecte = code_manuel
-                        st.session_state.scan_effectue = True
-                        st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -470,29 +457,18 @@ if st.session_state.page == "saisie":
     # Formulaire de création de pièce
     st.markdown("### 📝 Confirmation de la pièce")
     
-    # Afficher le code détecté s'il existe
-    if st.session_state.code_detecte:
-        st.markdown(f"""
-        <div class="barcode-result">
-            <strong>Code scanné :</strong> 
-            <span style="font-family: monospace; font-size: 1.2rem;">{st.session_state.code_detecte}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Le champ est pré-rempli avec le code détecté
-        nom_piece = st.text_input(
-            "Nom de la pièce (modifiable si besoin)",
-            value=st.session_state.code_detecte,
-            placeholder="Nom de la pièce",
-            key="nom_piece_input"
-        )
-    else:
-        # Pas de code détecté, saisie manuelle
-        nom_piece = st.text_input(
-            "Nom de la pièce",
-            placeholder="Ex: Vis M8, Écrou, Rondelle...",
-            key="nom_piece_input"
-        )
+    # Utiliser une clé différente pour le text_input qui change quand le code est détecté
+    input_key = f"nom_piece_input_{st.session_state.code_detecte or 'manuel'}"
+    
+    # Définir la valeur par défaut en fonction du code détecté
+    default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
+    
+    nom_piece = st.text_input(
+        "Nom de la pièce (modifiable si besoin)",
+        value=default_value,
+        placeholder="Nom de la pièce",
+        key=input_key
+    )
     
     col1, col2 = st.columns(2)
     with col1:
