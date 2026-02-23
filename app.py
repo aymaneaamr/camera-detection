@@ -54,27 +54,40 @@ st.markdown("""
         text-align: center;
         margin: 1rem 0;
     }
+    .location-badge {
+        background: #17a2b8;
+        color: white;
+        padding: 0.2rem 0.5rem;
+        border-radius: 5px;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
-        self.pieces = {}  # Dictionnaire {nom_piece: [liste_des_photos]}
+        self.pieces = {}  # Dictionnaire {nom_piece: {"photos": [], "emplacement": ""}}
         self.reset_piece_courante()
     
     def reset_piece_courante(self):
         """Réinitialise la pièce en cours de saisie"""
         self.piece_courante = {
             'nom': '',
-            'photos': [],  # Chaque photo: {timestamp, nb_pieces, image_originale, image_analyse}
+            'emplacement': '',
+            'photos': [],
             'total_pieces': 0
         }
     
-    def creer_nouvelle_piece(self, nom_piece):
-        """Crée une nouvelle pièce dans l'inventaire"""
+    def creer_nouvelle_piece(self, nom_piece, emplacement=""):
+        """Crée une nouvelle pièce dans l'inventaire avec son emplacement"""
         if nom_piece and nom_piece not in self.pieces:
-            self.pieces[nom_piece] = []
+            self.pieces[nom_piece] = {
+                'photos': [],
+                'emplacement': emplacement,
+                'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
             return True
         return False
     
@@ -92,29 +105,37 @@ class GestionnairePieces:
                 'nb_pieces': nb_pieces,
                 'image_originale': base64.b64encode(buffer_original).decode('utf-8'),
                 'image_analyse': base64.b64encode(buffer_analyse).decode('utf-8'),
-                'id': len(self.pieces[nom_piece])
+                'id': len(self.pieces[nom_piece]['photos'])
             }
             
-            self.pieces[nom_piece].append(photo_data)
+            self.pieces[nom_piece]['photos'].append(photo_data)
             return True
         return False
     
     def get_total_piece(self, nom_piece):
         """Retourne le total de pièces pour un nom donné"""
         if nom_piece in self.pieces:
-            return sum(photo['nb_pieces'] for photo in self.pieces[nom_piece])
+            return sum(photo['nb_pieces'] for photo in self.pieces[nom_piece]['photos'])
         return 0
     
     def get_photos_piece(self, nom_piece):
         """Retourne toutes les photos d'une pièce"""
-        return self.pieces.get(nom_piece, [])
+        if nom_piece in self.pieces:
+            return self.pieces[nom_piece]['photos']
+        return []
+    
+    def get_emplacement_piece(self, nom_piece):
+        """Retourne l'emplacement d'une pièce"""
+        if nom_piece in self.pieces:
+            return self.pieces[nom_piece].get('emplacement', '')
+        return ''
     
     def supprimer_photo(self, nom_piece, photo_id):
         """Supprime une photo d'une pièce"""
-        if nom_piece in self.pieces and 0 <= photo_id < len(self.pieces[nom_piece]):
-            del self.pieces[nom_piece][photo_id]
+        if nom_piece in self.pieces and 0 <= photo_id < len(self.pieces[nom_piece]['photos']):
+            del self.pieces[nom_piece]['photos'][photo_id]
             # Réindexer les IDs
-            for i, photo in enumerate(self.pieces[nom_piece]):
+            for i, photo in enumerate(self.pieces[nom_piece]['photos']):
                 photo['id'] = i
             return True
         return False
@@ -130,6 +151,10 @@ class GestionnairePieces:
         """Retourne un dictionnaire avec tous les totaux par pièce"""
         return {nom: self.get_total_piece(nom) for nom in self.pieces}
     
+    def get_tous_emplacements(self):
+        """Retourne un dictionnaire avec tous les emplacements par pièce"""
+        return {nom: self.get_emplacement_piece(nom) for nom in self.pieces}
+    
     def generer_excel(self):
         """Génère un fichier Excel avec l'inventaire complet"""
         # Créer un nouveau classeur Excel
@@ -140,8 +165,8 @@ class GestionnairePieces:
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
-        # En-têtes
-        headers = ["Nom de la pièce", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
+        # En-têtes (ajout de la colonne Emplacement)
+        headers = ["Nom de la pièce", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
             cell.value = header
@@ -152,26 +177,31 @@ class GestionnairePieces:
         
         # Données du résumé
         row = 2
-        for nom_piece, photos in self.pieces.items():
-            total = sum(p['nb_pieces'] for p in photos)
-            nb_photos = len(photos)
-            derniere_date = photos[-1]['timestamp'] if photos else "N/A"
+        for nom_piece, data in self.pieces.items():
+            total = sum(p['nb_pieces'] for p in data['photos'])
+            nb_photos = len(data['photos'])
+            derniere_date = data['photos'][-1]['timestamp'] if data['photos'] else data.get('date_creation', 'N/A')
+            emplacement = data.get('emplacement', '')
             
             sheet_resume.cell(row=row, column=1).value = nom_piece
-            sheet_resume.cell(row=row, column=2).value = total
-            sheet_resume.cell(row=row, column=3).value = nb_photos
-            sheet_resume.cell(row=row, column=4).value = derniere_date
+            sheet_resume.cell(row=row, column=2).value = emplacement
+            sheet_resume.cell(row=row, column=3).value = total
+            sheet_resume.cell(row=row, column=4).value = nb_photos
+            sheet_resume.cell(row=row, column=5).value = derniere_date
             row += 1
         
         # Ajuster la largeur des colonnes
-        for col in range(1, 5):
-            sheet_resume.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 20
+        sheet_resume.column_dimensions['A'].width = 25
+        sheet_resume.column_dimensions['B'].width = 20
+        sheet_resume.column_dimensions['C'].width = 15
+        sheet_resume.column_dimensions['D'].width = 15
+        sheet_resume.column_dimensions['E'].width = 22
         
         # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
-        # En-têtes détail
-        detail_headers = ["Pièce", "Photo #", "Date", "Nombre de pièces"]
+        # En-têtes détail (ajout de la colonne Emplacement)
+        detail_headers = ["Pièce", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
             cell.value = header
@@ -181,19 +211,23 @@ class GestionnairePieces:
         
         # Données détaillées
         row = 2
-        for nom_piece, photos in self.pieces.items():
-            for i, photo in enumerate(photos, 1):
+        for nom_piece, data in self.pieces.items():
+            emplacement = data.get('emplacement', '')
+            for i, photo in enumerate(data['photos'], 1):
                 sheet_detail.cell(row=row, column=1).value = nom_piece
-                sheet_detail.cell(row=row, column=2).value = f"Photo {i}"
-                sheet_detail.cell(row=row, column=3).value = photo['timestamp']
-                sheet_detail.cell(row=row, column=4).value = photo['nb_pieces']
+                sheet_detail.cell(row=row, column=2).value = emplacement
+                sheet_detail.cell(row=row, column=3).value = f"Photo {i}"
+                sheet_detail.cell(row=row, column=4).value = photo['timestamp']
+                sheet_detail.cell(row=row, column=5).value = photo['nb_pieces']
                 row += 1
         
         # Ajuster les colonnes du détail
-        for col in range(1, 5):
-            sheet_detail.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 25
+        sheet_detail.column_dimensions['A'].width = 25
+        sheet_detail.column_dimensions['B'].width = 20
+        sheet_detail.column_dimensions['C'].width = 12
+        sheet_detail.column_dimensions['D'].width = 22
+        sheet_detail.column_dimensions['E'].width = 18
         
-        # Sauvegarder dans le buffer
         workbook.save(output)
         output.seek(0)
         return output
@@ -315,9 +349,10 @@ st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Scanner** un code-barres pour identifier automatiquement la pièce
-2. **Ajouter** plusieurs photos pour cette pièce
-3. **Changer** de pièce et répéter
-4. **Exporter** un fichier Excel avec tous les totaux
+2. **Ajouter** un emplacement de stockage (optionnel)
+3. **Ajouter** plusieurs photos pour cette pièce
+4. **Changer** de pièce et répéter
+5. **Exporter** un fichier Excel avec tous les totaux
 """)
 
 # Barre latérale avec la liste des pièces
@@ -325,16 +360,24 @@ with st.sidebar:
     st.header("📋 Pièces en inventaire")
     
     if gestionnaire.pieces:
-        # Afficher toutes les pièces avec leurs totaux
+        # Afficher toutes les pièces avec leurs totaux et emplacements
         for nom_piece in gestionnaire.pieces.keys():
             total = gestionnaire.get_total_piece(nom_piece)
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                if st.button(f"📦 {nom_piece}", key=f"select_{nom_piece}", use_container_width=True):
-                    st.session_state.piece_selectionnee = nom_piece
-                    st.session_state.page = "details"
-            with col2:
-                st.write(f"**{total}**")
+            emplacement = gestionnaire.get_emplacement_piece(nom_piece)
+            
+            with st.container():
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    if emplacement:
+                        bouton_texte = f"📦 {nom_piece}  <span class='location-badge'>{emplacement}</span>"
+                    else:
+                        bouton_texte = f"📦 {nom_piece}"
+                    
+                    if st.button(bouton_texte, key=f"select_{nom_piece}", use_container_width=True):
+                        st.session_state.piece_selectionnee = nom_piece
+                        st.session_state.page = "details"
+                with col2:
+                    st.write(f"**{total}**")
         
         st.divider()
         
@@ -454,28 +497,43 @@ if st.session_state.page == "saisie":
     
     st.markdown("---")
     
-    # Formulaire de création de pièce
-    st.markdown("### 📝 Confirmation de la pièce")
+    # Formulaire de création de pièce avec emplacement optionnel
+    st.markdown("### 📝 Informations de la pièce")
     
-    # Utiliser une clé différente pour le text_input qui change quand le code est détecté
+    # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
     input_key = f"nom_piece_input_{st.session_state.code_detecte or 'manuel'}"
     
     # Définir la valeur par défaut en fonction du code détecté
     default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
-    nom_piece = st.text_input(
-        "Nom de la pièce (modifiable si besoin)",
-        value=default_value,
-        placeholder="Nom de la pièce",
-        key=input_key
-    )
+    # Deux colonnes pour le nom et l'emplacement
+    col_nom, col_emp = st.columns([2, 1])
+    
+    with col_nom:
+        nom_piece = st.text_input(
+            "Nom de la pièce *",
+            value=default_value,
+            placeholder="Nom de la pièce (obligatoire)",
+            key=input_key
+        )
+    
+    with col_emp:
+        emplacement = st.text_input(
+            "Emplacement (optionnel)",
+            placeholder="Ex: A-12, Rayon 3...",
+            key="emplacement_input"
+        )
+    
+    st.caption("* Champ obligatoire")
     
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Créer la pièce", use_container_width=True):
             if nom_piece:
-                if gestionnaire.creer_nouvelle_piece(nom_piece):
+                if gestionnaire.creer_nouvelle_piece(nom_piece, emplacement):
                     st.success(f"✅ Pièce '{nom_piece}' créée avec succès!")
+                    if emplacement:
+                        st.info(f"📍 Emplacement: {emplacement}")
                     st.session_state.piece_selectionnee = nom_piece
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
@@ -496,15 +554,21 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
     nom_piece = st.session_state.piece_selectionnee
     photos = gestionnaire.get_photos_piece(nom_piece)
     total = gestionnaire.get_total_piece(nom_piece)
+    emplacement = gestionnaire.get_emplacement_piece(nom_piece)
     
-    # En-tête
-    col_h1, col_h2, col_h3 = st.columns([2, 1, 1])
+    # En-tête avec emplacement
+    col_h1, col_h2, col_h3, col_h4 = st.columns([2, 1, 1, 1])
     with col_h1:
         st.header(f"📦 {nom_piece}")
+        if emplacement:
+            st.markdown(f"<span class='location-badge'>📍 {emplacement}</span>", unsafe_allow_html=True)
     with col_h2:
         st.metric("Total pièces", total)
     with col_h3:
         st.metric("Photos", len(photos))
+    with col_h4:
+        if emplacement:
+            st.metric("Emplacement", emplacement)
     
     # Afficher un badge si le nom est un code
     if re.match(r'^[A-Z0-9-]+$', nom_piece):
@@ -667,11 +731,14 @@ elif st.session_state.page == "photo_detail" and st.session_state.piece_selectio
 
 # Pied de page
 st.markdown("---")
-col_f1, col_f2, col_f3 = st.columns(3)
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v2.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
 with col_f3:
-    st.caption(f"📊 Types de pièces: {len(gestionnaire.pieces)}")
+    st.caption(f"📊 Types: {len(gestionnaire.pieces)}")
+with col_f4:
+    emplacements_renseignes = sum(1 for e in gestionnaire.get_tous_emplacements().values() if e)
+    st.caption(f"📍 Emplacements: {emplacements_renseignes}/{len(gestionnaire.pieces)}")
