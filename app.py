@@ -61,6 +61,40 @@ st.markdown("""
         border-radius: 5px;
         font-size: 0.8rem;
         margin-left: 0.5rem;
+        display: inline-block;
+    }
+    .piece-card {
+        background: white;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 8px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .piece-card:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        border-color: #667eea;
+    }
+    .piece-name {
+        font-weight: bold;
+        color: #2c3e50;
+    }
+    .piece-location {
+        background: #17a2b8;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        display: inline-block;
+        margin-left: 5px;
+    }
+    .piece-total {
+        background: #667eea;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        display: inline-block;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -161,6 +195,17 @@ class GestionnairePieces:
         output = BytesIO()
         workbook = openpyxl.Workbook()
         
+        # Style
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill_bleu = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_fill_vert = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
         # Feuille principale - Résumé
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
@@ -170,10 +215,10 @@ class GestionnairePieces:
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
             cell.value = header
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
+            cell.font = header_font
+            cell.fill = header_fill_bleu
             cell.alignment = Alignment(horizontal="center")
+            cell.border = border
         
         # Données du résumé
         row = 2
@@ -188,6 +233,10 @@ class GestionnairePieces:
             sheet_resume.cell(row=row, column=3).value = total
             sheet_resume.cell(row=row, column=4).value = nb_photos
             sheet_resume.cell(row=row, column=5).value = derniere_date
+            
+            for col in range(1, 6):
+                cell = sheet_resume.cell(row=row, column=col)
+                cell.border = border
             row += 1
         
         # Ajuster la largeur des colonnes
@@ -205,9 +254,10 @@ class GestionnairePieces:
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
             cell.value = header
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+            cell.font = header_font
+            cell.fill = header_fill_vert
             cell.alignment = Alignment(horizontal="center")
+            cell.border = border
         
         # Données détaillées
         row = 2
@@ -219,6 +269,10 @@ class GestionnairePieces:
                 sheet_detail.cell(row=row, column=3).value = f"Photo {i}"
                 sheet_detail.cell(row=row, column=4).value = photo['timestamp']
                 sheet_detail.cell(row=row, column=5).value = photo['nb_pieces']
+                
+                for col in range(1, 6):
+                    cell = sheet_detail.cell(row=row, column=col)
+                    cell.border = border
                 row += 1
         
         # Ajuster les colonnes du détail
@@ -341,6 +395,8 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'ajout_photo' not in st.session_state:
+    st.session_state.ajout_photo = False
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -360,26 +416,31 @@ with st.sidebar:
     st.header("📋 Pièces en inventaire")
     
     if gestionnaire.pieces:
-        # Afficher toutes les pièces avec leurs totaux et emplacements
         for nom_piece in gestionnaire.pieces.keys():
             total = gestionnaire.get_total_piece(nom_piece)
             emplacement = gestionnaire.get_emplacement_piece(nom_piece)
             
+            # Créer un conteneur pour chaque pièce
             with st.container():
                 col1, col2 = st.columns([3, 1])
+                
                 with col1:
+                    # Afficher le nom avec l'emplacement en markdown
                     if emplacement:
-                        bouton_texte = f"📦 {nom_piece}  <span class='location-badge'>{emplacement}</span>"
+                        st.markdown(f"**📦 {nom_piece}**  \n📍 `{emplacement}`")
                     else:
-                        bouton_texte = f"📦 {nom_piece}"
+                        st.markdown(f"**📦 {nom_piece}**")
                     
-                    if st.button(bouton_texte, key=f"select_{nom_piece}", use_container_width=True):
+                    # Bouton de sélection
+                    if st.button("Sélectionner", key=f"select_{nom_piece}", use_container_width=True):
                         st.session_state.piece_selectionnee = nom_piece
                         st.session_state.page = "details"
+                        st.rerun()
+                
                 with col2:
-                    st.write(f"**{total}**")
-        
-        st.divider()
+                    st.markdown(f"**{total}**")
+                
+                st.divider()
         
         # Bouton pour retourner à la saisie
         if st.button("➕ Nouvelle pièce", use_container_width=True):
