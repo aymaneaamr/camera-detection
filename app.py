@@ -396,25 +396,25 @@ with st.sidebar:
             with st.container():
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    # Construire le texte du bouton
-                    bouton_texte = f"📦 {code_article}"
-                    if libelle:
-                        bouton_texte += f"<br><small>{libelle}</small>"
-                    
-                    if st.button(bouton_texte, key=f"select_{code_article}", use_container_width=True):
+                    # Créer un bouton avec le code article
+                    if st.button(f"📦 {code_article}", key=f"select_{code_article}", use_container_width=True):
                         st.session_state.article_selectionne = code_article
                         st.session_state.page = "details"
                 with col2:
                     st.write(f"**{total}**")
             
-            # Afficher les badges en dessous
+            # Afficher les badges séparément
             if libelle or emplacement:
-                badge_cols = st.columns([3, 1])
-                with badge_cols[0]:
-                    if libelle:
-                        st.markdown(f"<span class='label-badge'>📝 {libelle}</span>", unsafe_allow_html=True)
-                    if emplacement:
-                        st.markdown(f"<span class='location-badge'>📍 {emplacement}</span>", unsafe_allow_html=True)
+                badge_text = ""
+                if libelle:
+                    badge_text += f"📝 {libelle}"
+                if libelle and emplacement:
+                    badge_text += " | "
+                if emplacement:
+                    badge_text += f"📍 {emplacement}"
+                
+                if badge_text:
+                    st.caption(badge_text)
         
         st.divider()
         
