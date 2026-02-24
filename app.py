@@ -12,6 +12,15 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
 
+# Dictionnaire des articles prédéfinis
+ARTICLES_PREDEFINIS = {
+    "10751037": "Capacitor E54.G85-203G30 Un 1260 V DC / 750 AC MKP 20µF",
+    "10751038": "Contacteur principal Bipolaire",
+    "10751039": "Contacteur de précharge Bipolaire",
+    "10751040": "Coupe circuit 1A, 480VAC, 3Poles",
+    "10751050": "Cosse à sertir 50x8"
+}
+
 # Configuration de la page
 st.set_page_config(
     page_title="Gestionnaire d'Inventaire Multi-Pièces",
@@ -70,6 +79,14 @@ st.markdown("""
         font-size: 0.8rem;
         margin-left: 0.5rem;
     }
+    .article-found {
+        background: #cce5ff;
+        color: #004085;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border-left: 5px solid #004085;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,6 +109,10 @@ class GestionnairePieces:
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
+            # Si le code article existe dans les articles prédéfinis et que le libellé n'est pas fourni
+            if code_article in ARTICLES_PREDEFINIS and not libelle:
+                libelle = ARTICLES_PREDEFINIS[code_article]
+            
             self.articles[code_article] = {
                 'libelle': libelle,
                 'photos': [],
@@ -262,6 +283,11 @@ class GestionnairePieces:
         """Réinitialise complètement l'inventaire"""
         self.articles = {}
 
+# Fonction pour rechercher un article par code
+def rechercher_article_par_code(code):
+    """Recherche un article dans la base prédéfinie"""
+    return ARTICLES_PREDEFINIS.get(code, None)
+
 # Fonction pour détecter et lire les codes-barres
 def detecter_code_barre(image):
     """Détecte et lit les codes-barres dans une image"""
@@ -407,7 +433,7 @@ with st.sidebar:
             if libelle or emplacement:
                 badge_text = ""
                 if libelle:
-                    badge_text += f"📝 {libelle}"
+                    badge_text += f"📝 {libelle[:30]}..." if len(libelle) > 30 else f"📝 {libelle}"
                 if libelle and emplacement:
                     badge_text += " | "
                 if emplacement:
@@ -448,6 +474,24 @@ with st.sidebar:
                 st.rerun()
     else:
         st.info("Aucun article pour le moment")
+    
+    st.divider()
+    
+    # Section des articles prédéfinis
+    with st.expander("📚 Articles prédéfinis"):
+        for code, libelle in ARTICLES_PREDEFINIS.items():
+            st.caption(f"**{code}**: {libelle[:50]}..." if len(libelle) > 50 else f"**{code}**: {libelle}")
+        
+        # Sélecteur rapide d'articles prédéfinis
+        article_choisi = st.selectbox(
+            "Choisir un article à créer",
+            options=[""] + list(ARTICLES_PREDEFINIS.keys()),
+            format_func=lambda x: f"{x} - {ARTICLES_PREDEFINIS[x][:30]}..." if x and x in ARTICLES_PREDEFINIS else "Sélectionner..."
+        )
+        if article_choisi and st.button("➕ Créer cet article", use_container_width=True):
+            st.session_state.code_detecte = article_choisi
+            st.session_state.scan_effectue = True
+            st.rerun()
 
 # Contenu principal
 if st.session_state.page == "saisie":
@@ -484,6 +528,16 @@ if st.session_state.page == "saisie":
                     st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
                             caption="Code-barres détecté", use_container_width=True)
                     
+                    # Vérifier si le code existe dans les articles prédéfinis
+                    libelle_trouve = rechercher_article_par_code(code_trouve)
+                    if libelle_trouve:
+                        st.markdown(f"""
+                        <div class="article-found">
+                            <h4>📝 Article reconnu !</h4>
+                            <p><strong>{libelle_trouve}</strong></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
                     st.markdown(f"""
                     <div class="success-box">
                         <h4>✅ Code-barres détecté !</h4>
@@ -512,6 +566,16 @@ if st.session_state.page == "saisie":
                     code_trouve = codes[0]['data']
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
+                    
+                    # Vérifier si le code existe dans les articles prédéfinis
+                    libelle_trouve = rechercher_article_par_code(code_trouve)
+                    if libelle_trouve:
+                        st.markdown(f"""
+                        <div class="article-found">
+                            <h4>📝 Article reconnu !</h4>
+                            <p><strong>{libelle_trouve}</strong></p>
+                        </div>
+                        """, unsafe_allow_html=True)
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -553,10 +617,24 @@ if st.session_state.page == "saisie":
             placeholder="Code article (obligatoire)",
             key=input_key
         )
+        
+        # Si un code article est entré et qu'il existe dans les articles prédéfinis
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            st.markdown(f"""
+            <div class="article-found">
+                <strong>📝 Article trouvé:</strong> {ARTICLES_PREDEFINIS[code_article]}
+            </div>
+            """, unsafe_allow_html=True)
     
     with col_lib:
+        # Déterminer la valeur par défaut pour le libellé
+        default_libelle = ""
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            default_libelle = ARTICLES_PREDEFINIS[code_article]
+        
         libelle = st.text_input(
             "Libellé (optionnel)",
+            value=default_libelle,
             placeholder="Description de l'article",
             key="libelle_input"
         )
@@ -586,7 +664,10 @@ if st.session_state.page == "saisie":
                     st.session_state.scan_effectue = False
                     st.rerun()
                 else:
-                    st.error("❌ Ce code article existe déjà")
+                    if code_article in gestionnaire.articles:
+                        st.error(f"❌ Le code article '{code_article}' existe déjà dans l'inventaire")
+                    else:
+                        st.error("❌ Erreur lors de la création de l'article")
             else:
                 st.error("❌ Veuillez entrer un code article")
     with col2:
