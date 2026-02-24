@@ -588,40 +588,45 @@ if st.session_state.page == "saisie":
             "Code article *",
             value=default_code,
             placeholder="Code article (obligatoire)",
-            key="code_article"
+            key="code_article_input"
         )
-        
-        # Déterminer le libellé et l'emplacement en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
-            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
-            
-            # Afficher le message si l'article est trouvé
-            st.markdown(f"""
-            <div class="article-found">
-                <strong>📝 Article trouvé :</strong> {libelle_value}<br>
-                <strong>📍 Emplacement :</strong> {emplacement_value}
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            libelle_value = ""
-            emplacement_value = ""
     
     with col_lib:
+        # Déterminer le libellé en fonction du code
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
+        else:
+            libelle_value = ""
+        
         libelle = st.text_input(
             "Libellé (optionnel)",
             value=libelle_value,
             placeholder="Description de l'article",
-            key="libelle"
+            key="libelle_input"
         )
     
     with col_emp:
+        # Déterminer l'emplacement en fonction du code
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+        else:
+            emplacement_value = ""
+        
         emplacement = st.text_input(
             "Emplacement (optionnel)",
             value=emplacement_value,
             placeholder="Ex: A-12, Rayon 3...",
-            key="emplacement"
+            key="emplacement_input"
         )
+    
+    # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
+    if code_article and code_article in ARTICLES_PREDEFINIS:
+        st.markdown(f"""
+        <div class="article-found">
+            <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
+            <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
+        </div>
+        """, unsafe_allow_html=True)
     
     st.caption("* Champ obligatoire")
     
