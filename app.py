@@ -430,34 +430,22 @@ if st.session_state.page == "saisie":
     
     st.markdown("---")
     
-    # ========== FORMULAIRE ULTRA SIMPLE ==========
+    # ========== SOLUTION SIMPLE : SI CODE ARTICLE ALORS LIBELLÉ ==========
     st.markdown("### 📝 Informations de l'article")
-    
-    # Initialiser les valeurs par défaut
-    if 'code_saisie' not in st.session_state:
-        st.session_state.code_saisie = st.session_state.code_detecte if st.session_state.code_detecte else ""
-    if 'libelle_saisie' not in st.session_state:
-        st.session_state.libelle_saisie = ""
     
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_code:
+        # Valeur par défaut depuis le scan
+        default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
         code_article = st.text_input(
             "Code article *",
-            value=st.session_state.code_saisie,
+            value=default_code,
             placeholder="Code article (obligatoire)",
-            key="code_saisie"
+            key="code_article"
         )
         
-        # Si le code change, on met à jour le libellé dans la session
-        if code_article != st.session_state.get('code_precedent', ''):
-            st.session_state.code_precedent = code_article
-            if code_article in ARTICLES_PREDEFINIS:
-                st.session_state.libelle_saisie = ARTICLES_PREDEFINIS[code_article]
-            else:
-                st.session_state.libelle_saisie = ""
-        
-        # Afficher le message si article trouvé
+        # Message si article trouvé
         if code_article and code_article in ARTICLES_PREDEFINIS:
             st.markdown(f"""
             <div class="article-found">
@@ -466,18 +454,24 @@ if st.session_state.page == "saisie":
             """, unsafe_allow_html=True)
     
     with col_lib:
+        # SI LE CODE EXISTE, ON AFFICHE LE LIBELLÉ DIRECTEMENT
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            libelle_value = ARTICLES_PREDEFINIS[code_article]
+        else:
+            libelle_value = ""
+        
         libelle = st.text_input(
             "Libellé (optionnel)",
-            value=st.session_state.libelle_saisie,
+            value=libelle_value,
             placeholder="Description de l'article",
-            key="libelle_saisie"
+            key="libelle"
         )
     
     with col_emp:
         emplacement = st.text_input(
             "Emplacement (optionnel)",
             placeholder="Ex: A-12, Rayon 3...",
-            key="emplacement_input"
+            key="emplacement"
         )
     
     st.caption("* Champ obligatoire")
@@ -492,11 +486,6 @@ if st.session_state.page == "saisie":
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
-                    # Réinitialiser les champs
-                    st.session_state.code_saisie = ""
-                    st.session_state.libelle_saisie = ""
-                    if 'code_precedent' in st.session_state:
-                        del st.session_state.code_precedent
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -509,20 +498,196 @@ if st.session_state.page == "saisie":
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.code_saisie = ""
-            st.session_state.libelle_saisie = ""
-            if 'code_precedent' in st.session_state:
-                del st.session_state.code_precedent
             st.rerun()
 
-# Les parties "details" et "photo_detail" restent inchangées
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
-    # ... (code inchangé - gardez votre code existant ici)
-    pass
+    # Page de détails d'un article
+    code_article = st.session_state.article_selectionne
+    photos = gestionnaire.get_photos_article(code_article)
+    total = gestionnaire.get_total_article(code_article)
+    libelle = gestionnaire.get_libelle_article(code_article)
+    emplacement = gestionnaire.get_emplacement_article(code_article)
+    
+    # En-tête avec libellé et emplacement
+    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1, 1, 1, 1])
+    with col_h1:
+        st.header(f"📦 {code_article}")
+        if libelle:
+            st.markdown(f"<span class='label-badge'>📝 {libelle}</span>", unsafe_allow_html=True)
+        if emplacement:
+            st.markdown(f"<span class='location-badge'>📍 {emplacement}</span>", unsafe_allow_html=True)
+    with col_h2:
+        st.metric("Total pièces", total)
+    with col_h3:
+        st.metric("Photos", len(photos))
+    with col_h4:
+        if libelle:
+            st.metric("Libellé", libelle[:20] + "..." if len(libelle) > 20 else libelle)
+    with col_h5:
+        if emplacement:
+            st.metric("Emplacement", emplacement)
+    
+    # Afficher un badge si le code est un code-barres
+    if re.match(r'^[A-Z0-9-]+$', code_article):
+        st.info(f"🔖 Code produit: {code_article}")
+    
+    # Options
+    col_o1, col_o2, col_o3 = st.columns(3)
+    with col_o1:
+        if st.button("⬅️ Retour à la saisie", use_container_width=True):
+            st.session_state.page = "saisie"
+            st.session_state.code_detecte = None
+            st.session_state.scan_effectue = False
+            st.rerun()
+    with col_o2:
+        if st.button("📸 Ajouter une photo", use_container_width=True):
+            st.session_state.ajout_photo = True
+    with col_o3:
+        if st.button("🗑️ Supprimer cet article", use_container_width=True, type="primary"):
+            if gestionnaire.supprimer_article(code_article):
+                st.success(f"✅ Article '{code_article}' supprimé")
+                st.session_state.page = "saisie"
+                st.rerun()
+    
+    st.divider()
+    
+    # Ajout de photo
+    if st.session_state.get('ajout_photo', False):
+        st.subheader("📸 Ajouter une photo")
+        
+        col_p1, col_p2 = st.columns([2, 1])
+        with col_p2:
+            if st.button("❌ Annuler"):
+                st.session_state.ajout_photo = False
+                st.rerun()
+        
+        with col_p1:
+            source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
+        
+        if source == "📸 Prendre une photo":
+            img_file = st.camera_input("Prendre une photo")
+            if img_file:
+                with st.spinner("Analyse..."):
+                    bytes_data = img_file.getvalue()
+                    frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
+        
+        else:  # Choisir une image
+            uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
+            if uploaded_file:
+                with st.spinner("Analyse..."):
+                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
+    
+    # Affichage des photos existantes
+    if photos:
+        st.subheader("📸 Photos enregistrées")
+        
+        # Options d'affichage
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            tri = st.selectbox("Trier par", ["Plus récente", "Plus ancienne", "Plus de pièces", "Moins de pièces"])
+        
+        # Trier les photos
+        photos_affichees = photos.copy()
+        if tri == "Plus récente":
+            photos_affichees = list(reversed(photos_affichees))
+        elif tri == "Plus ancienne":
+            photos_affichees = photos_affichees
+        elif tri == "Plus de pièces":
+            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'], reverse=True)
+        elif tri == "Moins de pièces":
+            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'])
+        
+        # Afficher les photos en grille
+        cols = st.columns(3)
+        for i, photo in enumerate(photos_affichees):
+            with cols[i % 3]:
+                # Afficher la miniature
+                img = base64_to_image(photo['image_analyse'])
+                img_mini = cv2.resize(img, (200, 150))
+                st.image(cv2.cvtColor(img_mini, cv2.COLOR_BGR2RGB), use_column_width=True)
+                
+                # Informations
+                st.caption(f"📅 {photo['timestamp'][:10]}")
+                st.caption(f"🔢 {photo['nb_pieces']} pièces")
+                
+                # Boutons
+                col_b1, col_b2 = st.columns(2)
+                with col_b1:
+                    if st.button("🔍 Voir", key=f"view_{code_article}_{i}"):
+                        st.session_state.photo_selectionnee = photo['id']
+                        st.session_state.page = "photo_detail"
+                        st.rerun()
+                with col_b2:
+                    if st.button("🗑️", key=f"del_{code_article}_{i}"):
+                        if gestionnaire.supprimer_photo(code_article, photo['id']):
+                            st.rerun()
+    
+    else:
+        st.info("📸 Aucune photo pour cet article. Cliquez sur 'Ajouter une photo' pour commencer.")
 
 elif st.session_state.page == "photo_detail" and st.session_state.article_selectionne and st.session_state.photo_selectionnee is not None:
-    # ... (code inchangé - gardez votre code existant ici)
-    pass
+    # Détail d'une photo spécifique
+    code_article = st.session_state.article_selectionne
+    photos = gestionnaire.get_photos_article(code_article)
+    photo_id = st.session_state.photo_selectionnee
+    
+    if 0 <= photo_id < len(photos):
+        photo = photos[photo_id]
+        libelle = gestionnaire.get_libelle_article(code_article)
+        
+        st.header(f"🔍 Détail de la photo - {code_article}")
+        if libelle:
+            st.subheader(libelle)
+        
+        # Afficher les deux images
+        col_img1, col_img2 = st.columns(2)
+        
+        with col_img1:
+            st.subheader("📸 Image originale")
+            img_originale = base64_to_image(photo['image_originale'])
+            st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
+        
+        with col_img2:
+            st.subheader(f"🔍 Analyse - {photo['nb_pieces']} pièces")
+            img_analyse = base64_to_image(photo['image_analyse'])
+            st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
+        
+        # Informations
+        st.metric("Nombre de pièces", photo['nb_pieces'])
+        st.caption(f"Date: {photo['timestamp']}")
+        
+        # Boutons
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            if st.button("⬅️ Retour à l'article", use_container_width=True):
+                st.session_state.page = "details"
+                st.session_state.photo_selectionnee = None
+                st.rerun()
+        with col_b2:
+            if st.button("🗑️ Supprimer cette photo", use_container_width=True, type="primary"):
+                if gestionnaire.supprimer_photo(code_article, photo_id):
+                    st.session_state.page = "details"
+                    st.session_state.photo_selectionnee = None
+                    st.rerun()
+    else:
+        st.error("Photo non trouvée")
+        if st.button("Retour"):
+            st.session_state.page = "details"
+            st.session_state.photo_selectionnee = None
+            st.rerun()
 
 # Pied de page
 st.markdown("---")
