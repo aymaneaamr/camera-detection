@@ -14,7 +14,7 @@ import re
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Gestionnaire d'Inventaire Multi-Pièces",
+    page_title="Gestionnaire d'Inventaire Multi-Articles",
     page_icon="📦",
     layout="wide"
 )
@@ -551,7 +551,7 @@ if st.session_state.page == "saisie":
     with col_emp:
         emplacement = st.text_input(
             "Emplacement (optionnel)",
-            placeholder="Ex: A-12",
+            placeholder="Ex: A-12, Rayon 3...",
             key="emplacement_input"
         )
     
