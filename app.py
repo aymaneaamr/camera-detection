@@ -205,7 +205,7 @@ class GestionnaireArticles:
             row += 1
         
         # Ajuster la largeur des colonnes
-        sheet_resume.column_dimensions['A'].width = 20
+        sheet_resume.column_dimensions['A'].width = 25
         sheet_resume.column_dimensions['B'].width = 30
         sheet_resume.column_dimensions['C'].width = 20
         sheet_resume.column_dimensions['D'].width = 15
@@ -239,7 +239,7 @@ class GestionnaireArticles:
                 row += 1
         
         # Ajuster les colonnes du détail
-        sheet_detail.column_dimensions['A'].width = 20
+        sheet_detail.column_dimensions['A'].width = 25
         sheet_detail.column_dimensions['B'].width = 30
         sheet_detail.column_dimensions['C'].width = 20
         sheet_detail.column_dimensions['D'].width = 12
