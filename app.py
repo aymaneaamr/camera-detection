@@ -73,68 +73,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Dictionnaire de correspondance codes article -> libellés
-CODE_LIBELLE_MAP = {
-    "10501073": "Sectionneur de puissance micro DJ 1A FOR FAN-Q901",
-    "10751000": "MODULE LPVS CHARGEUR BATTERIE 24V PT043694",
-    "10751002": "Carte pilote IGBT sextuple PT038849",
-    "10751003": "CARTE PILOTE IGBT QUADRUPLE PT044477",
-    "10751004": "Carte d'alimentation électrique PT045585",
-    "10751005": "Ventilateur convertisseur statique (CVS) M901",
-    "10751006": "PILE LITHIUM 3 volts VARTA pour CVS",
-    "10751007": "TRANSFORMATEUR DE COURANT DC AC (U117) PT040560",
-    "10751008": "CARTE D'ADAPTATION PC104 PT032894",
-    "10751010": "CARTE EXTENSION A RELAIS (A721) PT040852 (-)",
-    "10751011": "CARTE INTERFACE SUR CARTE DE CC (A711_714) PT043699",
-    "10751012": "CARTE INTERFACE SUR CARTE DE CO (A713_713) PT043701",
-    "10751013": "MODULE RC PT046839",
-    "10751014": "Carte alimentation électrique",
-    "10751015": "VENTILATEUR CVS (M902)",
-    "10751016": "CARTE DE COMMANDE CONVERTISSEUR (A701_704) PT043697",
-    "10751017": "CARTE DE COMMANDE ONDULEUR (A703_703) PT043698",
-    "10751018": "CARTE EXTENSION A RELAIS (A721) PT040852",
-    "10751022": "CARTE INTERFACE SUR CARTE DE CC (A711_714) PT043699 (-)",
-    "10751023": "Filtre de purge DAS-M12 (ensemble 4 article)",
-    "10751024": "TRANSDUCTEUR DE TENSION DC-AC (U115) PT04091",
-    "10751027": "CARTE DEMARRAGE BATTERIE BASSE (A103) PT040932",
-    "10751028": "Roulement SKF6002 ZZ",
-    "10751029": "MODULE D'ENTREE PT043660",
-    "10751030": "Carte pilote IGBT sextuple PT040093",
-    "10751031": "MODULE ONDULEUR TRIPHASE 17 KVA PT043665",
-    "10751032": "MODULE ONDULEUR TRIPHASE 57 KVA PT043687",
-    "10751033": "MODULE DE PROTECTION CVS PT043659",
-    "10751035": "RESISTANCE DE PRECHARGE 25R, 145 W, 10 % LRCS000110388",
-    "10751036": "Capacitor E54.G62-103G10 Un 1260 V DC / 750 AC MKP 10µF",
-    "10751037": "Capacitor E54.G85-203G30 Un 1260 V DC / 750 AC MKP 20µF",
-    "10751038": "Contacteur principal Bipolaire",
-    "10751039": "Contacteur de précharge Bipolaire",
-    "10751040": "Coupe circuit 1A, 480VAC, 3Poles",
-    "10751050": "Cosse à sertir 50x8",
-    "10751051": "Carte de division de tension (A115) pour CVS",
-    "10754000": "Circuit C",
-    "10754000R": "Kit révision CVS 180 mois",
-    "10754001": "Carte de commande convertisseur SMD A701_704",
-    "10754002": "Carte de Commande Onduleur SMD A703_703",
-    "10754003": "Carte interface sur carte de commande convertisseur A711_714",
-    "10754004": "Carte interface carte de commande onduleur A713_713",
-    "10754006": "CARTE D'ALIMENTATION ELECTRIQUE A720 CVS(RBT3)",
-    "10755000": "Bobine d'entree 4.5MH, 200A",
-    "REP10751002": "Carte pilote IGBT sextuple PT038849",
-    "REP10751003": "CARTE PILOTE IGBT QUADRUPLE PT044477",
-    "REP10751004": "Carte d'alimentation électrique PT045585",
-    "REP10751012": "CARTE INTERFACE SUR CARTE DE CO (A713_713) PT043701",
-    "REP10751022": "CARTE INTERFACE SUR CARTE DE CC (A711_714) PT043699",
-    "REP10751031": "MODULE ONDULEUR TRIPHASE 17 KVA PT043665",
-    "REP10751032": "MODULE ONDULEUR TRIPHASE 57 KVA PT043687",
-    "REP10752000": "Convertisseur statique RBT1 70KVA",
-    "REP10754001": "Carte de commande convertisseur SMD A701_704",
-    "REP10754006": "CARTE D'ALIMENTATION ELECTRIQUE A720 CVS(RBT3)",
-    "S10751000": "MODULE LPVS CHARGEUR BATTERIE 24V UM-1168",
-    "S10751005": "Ventilateur convertisseur statique (CVS) DTR0000169484",
-    "S10752000": "Convertisseur Statique (CVS) P17-57-13 (Rotation)",
-    "S10752001": "Module de controle principal CVS"
-}
-
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
@@ -276,7 +214,7 @@ class GestionnairePieces:
         
         # Ajuster la largeur des colonnes
         sheet_resume.column_dimensions['A'].width = 20
-        sheet_resume.column_dimensions['B'].width = 50  # Plus large pour les libellés longs
+        sheet_resume.column_dimensions['B'].width = 30
         sheet_resume.column_dimensions['C'].width = 20
         sheet_resume.column_dimensions['D'].width = 15
         sheet_resume.column_dimensions['E'].width = 15
@@ -310,7 +248,7 @@ class GestionnairePieces:
         
         # Ajuster les colonnes du détail
         sheet_detail.column_dimensions['A'].width = 20
-        sheet_detail.column_dimensions['B'].width = 50  # Plus large pour les libellés longs
+        sheet_detail.column_dimensions['B'].width = 30
         sheet_detail.column_dimensions['C'].width = 20
         sheet_detail.column_dimensions['D'].width = 12
         sheet_detail.column_dimensions['E'].width = 22
@@ -416,11 +354,6 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
-# Fonction pour obtenir le libellé automatiquement à partir du code
-def get_libelle_automatique(code):
-    """Retourne le libellé correspondant au code s'il existe dans le dictionnaire"""
-    return CODE_LIBELLE_MAP.get(code, "")
-
 # Initialisation
 if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
@@ -434,8 +367,6 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
-if 'libelle_auto' not in st.session_state:
-    st.session_state.libelle_auto = ""
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -444,7 +375,7 @@ st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Scanner** un code-barres pour identifier automatiquement l'article
-2. **Ajouter** un libellé descriptif (optionnel) - Saisie automatique possible
+2. **Ajouter** un libellé descriptif (optionnel)
 3. **Ajouter** un emplacement de stockage (optionnel)
 4. **Ajouter** plusieurs photos pour cet article
 5. **Changer** d'article et répéter
@@ -476,9 +407,7 @@ with st.sidebar:
             if libelle or emplacement:
                 badge_text = ""
                 if libelle:
-                    # Tronquer le libellé s'il est trop long pour l'affichage
-                    display_libelle = libelle[:40] + "..." if len(libelle) > 40 else libelle
-                    badge_text += f"📝 {display_libelle}"
+                    badge_text += f"📝 {libelle}"
                 if libelle and emplacement:
                     badge_text += " | "
                 if emplacement:
@@ -495,7 +424,6 @@ with st.sidebar:
             st.session_state.article_selectionne = None
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.libelle_auto = ""
             st.rerun()
         
         st.divider()
@@ -551,8 +479,6 @@ if st.session_state.page == "saisie":
                     code_trouve = codes[0]['data']
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
-                    # Mettre à jour le libellé automatique
-                    st.session_state.libelle_auto = get_libelle_automatique(code_trouve)
                     
                     # Afficher l'image avec le code détecté
                     st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
@@ -565,10 +491,6 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    if st.session_state.libelle_auto:
-                        st.info(f"📝 Libellé automatique trouvé : {st.session_state.libelle_auto}")
-                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -590,8 +512,6 @@ if st.session_state.page == "saisie":
                     code_trouve = codes[0]['data']
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
-                    # Mettre à jour le libellé automatique
-                    st.session_state.libelle_auto = get_libelle_automatique(code_trouve)
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -600,10 +520,6 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    if st.session_state.libelle_auto:
-                        st.info(f"📝 Libellé automatique trouvé : {st.session_state.libelle_auto}")
-                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -614,7 +530,6 @@ if st.session_state.page == "saisie":
         if st.button("🔄 Nouveau scan", use_container_width=True):
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
-            st.session_state.libelle_auto = ""
             st.rerun()
     
     st.markdown("---")
@@ -622,55 +537,42 @@ if st.session_state.page == "saisie":
     # Formulaire de création d'article avec libellé et emplacement optionnels
     st.markdown("### 📝 Informations de l'article")
     
+    # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
+    input_key = f"code_article_input_{st.session_state.code_detecte or 'manuel'}"
+    
     # Définir la valeur par défaut en fonction du code détecté
-    default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
+    default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
-    # Initialiser le libellé automatique si un code est présent
-    if default_code and not st.session_state.libelle_auto:
-        st.session_state.libelle_auto = get_libelle_automatique(default_code)
+    # Trois colonnes pour le code, le libellé et l'emplacement
+    col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
-    # Créer un formulaire pour capturer la soumission
-    with st.form(key="article_form"):
-        # Trois colonnes pour le code, le libellé et l'emplacement
-        col_code, col_lib, col_emp = st.columns([2, 3, 1])
-        
-        with col_code:
-            code_article = st.text_input(
-                "Code article *",
-                value=default_code,
-                placeholder="Code article (obligatoire)",
-                key="code_input"
-            )
-        
-        with col_lib:
-            # Si le code a changé, mettre à jour le libellé
-            if code_article and code_article != st.session_state.get('previous_code', ''):
-                st.session_state.libelle_auto = get_libelle_automatique(code_article)
-                st.session_state.previous_code = code_article
-            
-            libelle = st.text_input(
-                "Libellé (optionnel)",
-                value=st.session_state.libelle_auto,
-                placeholder="Description de l'article",
-                key="libelle_input"
-            )
-        
-        with col_emp:
-            emplacement = st.text_input(
-                "Emplacement (optionnel)",
-                placeholder="Ex: A-12, Rayon 3...",
-                key="emplacement_input"
-            )
-        
-        st.caption("* Champ obligatoire")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            submit_button = st.form_submit_button(label="✅ Créer l'article", use_container_width=True)
-        with col2:
-            cancel_button = st.form_submit_button(label="❌ Annuler", use_container_width=True)
-        
-        if submit_button:
+    with col_code:
+        code_article = st.text_input(
+            "Code article *",
+            value=default_value,
+            placeholder="Code article (obligatoire)",
+            key=input_key
+        )
+    
+    with col_lib:
+        libelle = st.text_input(
+            "Libellé (optionnel)",
+            placeholder="Description de l'article",
+            key="libelle_input"
+        )
+    
+    with col_emp:
+        emplacement = st.text_input(
+            "Emplacement (optionnel)",
+            placeholder="Ex: A-12, Rayon 3...",
+            key="emplacement_input"
+        )
+    
+    st.caption("* Champ obligatoire")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Créer l'article", use_container_width=True):
             if code_article:
                 if gestionnaire.creer_nouvel_article(code_article, libelle, emplacement):
                     st.success(f"✅ Article '{code_article}' créé avec succès!")
@@ -682,21 +584,15 @@ if st.session_state.page == "saisie":
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
-                    st.session_state.libelle_auto = ""
-                    if 'previous_code' in st.session_state:
-                        del st.session_state.previous_code
                     st.rerun()
                 else:
                     st.error("❌ Ce code article existe déjà")
             else:
                 st.error("❌ Veuillez entrer un code article")
-        
-        if cancel_button:
+    with col2:
+        if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.libelle_auto = ""
-            if 'previous_code' in st.session_state:
-                del st.session_state.previous_code
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -721,15 +617,14 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         st.metric("Photos", len(photos))
     with col_h4:
         if libelle:
-            display_libelle = libelle[:20] + "..." if len(libelle) > 20 else libelle
-            st.metric("Libellé", display_libelle)
+            st.metric("Libellé", libelle[:20] + "..." if len(libelle) > 20 else libelle)
     with col_h5:
         if emplacement:
             st.metric("Emplacement", emplacement)
     
-    # Afficher un badge si le code est dans le dictionnaire
-    if code_article in CODE_LIBELLE_MAP:
-        st.info(f"🔖 Code référence: {code_article}")
+    # Afficher un badge si le code est un code-barres
+    if re.match(r'^[A-Z0-9-]+$', code_article):
+        st.info(f"🔖 Code produit: {code_article}")
     
     # Options
     col_o1, col_o2, col_o3 = st.columns(3)
@@ -738,9 +633,6 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             st.session_state.page = "saisie"
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.libelle_auto = ""
-            if 'previous_code' in st.session_state:
-                del st.session_state.previous_code
             st.rerun()
     with col_o2:
         if st.button("📸 Ajouter une photo", use_container_width=True):
