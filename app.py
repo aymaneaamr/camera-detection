@@ -65,25 +65,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-class GestionnairePieces:
+class GestionnaireArticles:
     def __init__(self):
-        """Initialise le gestionnaire de pièces"""
-        self.pieces = {}  # Dictionnaire {nom_piece: {"photos": [], "emplacement": ""}}
-        self.reset_piece_courante()
+        """Initialise le gestionnaire d'articles"""
+        self.articles = {}  # Dictionnaire {nom_article: {"libelle": "", "photos": [], "emplacement": ""}}
+        self.reset_article_courant()
     
-    def reset_piece_courante(self):
-        """Réinitialise la pièce en cours de saisie"""
-        self.piece_courante = {
+    def reset_article_courant(self):
+        """Réinitialise l'article en cours de saisie"""
+        self.article_courant = {
             'nom': '',
+            'libelle': '',
             'emplacement': '',
             'photos': [],
-            'total_pieces': 0
+            'total_articles': 0
         }
     
-    def creer_nouvelle_piece(self, nom_piece, emplacement=""):
-        """Crée une nouvelle pièce dans l'inventaire avec son emplacement"""
-        if nom_piece and nom_piece not in self.pieces:
-            self.pieces[nom_piece] = {
+    def creer_nouvel_article(self, nom_article, libelle="", emplacement=""):
+        """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
+        if nom_article and nom_article not in self.articles:
+            self.articles[nom_article] = {
+                'libelle': libelle,
                 'photos': [],
                 'emplacement': emplacement,
                 'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -91,9 +93,9 @@ class GestionnairePieces:
             return True
         return False
     
-    def ajouter_photo_piece(self, nom_piece, frame_original, frame_analyse, nb_pieces):
-        """Ajoute une photo analysée à une pièce existante"""
-        if nom_piece in self.pieces:
+    def ajouter_photo_article(self, nom_article, frame_original, frame_analyse, nb_articles):
+        """Ajoute une photo analysée à un article existant"""
+        if nom_article in self.articles:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             # Convertir les images en base64
@@ -102,58 +104,68 @@ class GestionnairePieces:
             
             photo_data = {
                 'timestamp': timestamp,
-                'nb_pieces': nb_pieces,
+                'nb_articles': nb_articles,
                 'image_originale': base64.b64encode(buffer_original).decode('utf-8'),
                 'image_analyse': base64.b64encode(buffer_analyse).decode('utf-8'),
-                'id': len(self.pieces[nom_piece]['photos'])
+                'id': len(self.articles[nom_article]['photos'])
             }
             
-            self.pieces[nom_piece]['photos'].append(photo_data)
+            self.articles[nom_article]['photos'].append(photo_data)
             return True
         return False
     
-    def get_total_piece(self, nom_piece):
-        """Retourne le total de pièces pour un nom donné"""
-        if nom_piece in self.pieces:
-            return sum(photo['nb_pieces'] for photo in self.pieces[nom_piece]['photos'])
+    def get_total_article(self, nom_article):
+        """Retourne le total d'articles pour un nom donné"""
+        if nom_article in self.articles:
+            return sum(photo['nb_articles'] for photo in self.articles[nom_article]['photos'])
         return 0
     
-    def get_photos_piece(self, nom_piece):
-        """Retourne toutes les photos d'une pièce"""
-        if nom_piece in self.pieces:
-            return self.pieces[nom_piece]['photos']
+    def get_photos_article(self, nom_article):
+        """Retourne toutes les photos d'un article"""
+        if nom_article in self.articles:
+            return self.articles[nom_article]['photos']
         return []
     
-    def get_emplacement_piece(self, nom_piece):
-        """Retourne l'emplacement d'une pièce"""
-        if nom_piece in self.pieces:
-            return self.pieces[nom_piece].get('emplacement', '')
+    def get_emplacement_article(self, nom_article):
+        """Retourne l'emplacement d'un article"""
+        if nom_article in self.articles:
+            return self.articles[nom_article].get('emplacement', '')
         return ''
     
-    def supprimer_photo(self, nom_piece, photo_id):
-        """Supprime une photo d'une pièce"""
-        if nom_piece in self.pieces and 0 <= photo_id < len(self.pieces[nom_piece]['photos']):
-            del self.pieces[nom_piece]['photos'][photo_id]
+    def get_libelle_article(self, nom_article):
+        """Retourne le libellé d'un article"""
+        if nom_article in self.articles:
+            return self.articles[nom_article].get('libelle', '')
+        return ''
+    
+    def supprimer_photo(self, nom_article, photo_id):
+        """Supprime une photo d'un article"""
+        if nom_article in self.articles and 0 <= photo_id < len(self.articles[nom_article]['photos']):
+            del self.articles[nom_article]['photos'][photo_id]
             # Réindexer les IDs
-            for i, photo in enumerate(self.pieces[nom_piece]['photos']):
+            for i, photo in enumerate(self.articles[nom_article]['photos']):
                 photo['id'] = i
             return True
         return False
     
-    def supprimer_piece(self, nom_piece):
-        """Supprime complètement une pièce"""
-        if nom_piece in self.pieces:
-            del self.pieces[nom_piece]
+    def supprimer_article(self, nom_article):
+        """Supprime complètement un article"""
+        if nom_article in self.articles:
+            del self.articles[nom_article]
             return True
         return False
     
     def get_tous_les_totaux(self):
-        """Retourne un dictionnaire avec tous les totaux par pièce"""
-        return {nom: self.get_total_piece(nom) for nom in self.pieces}
+        """Retourne un dictionnaire avec tous les totaux par article"""
+        return {nom: self.get_total_article(nom) for nom in self.articles}
     
     def get_tous_emplacements(self):
-        """Retourne un dictionnaire avec tous les emplacements par pièce"""
-        return {nom: self.get_emplacement_piece(nom) for nom in self.pieces}
+        """Retourne un dictionnaire avec tous les emplacements par article"""
+        return {nom: self.get_emplacement_article(nom) for nom in self.articles}
+    
+    def get_tous_libelles(self):
+        """Retourne un dictionnaire avec tous les libellés par article"""
+        return {nom: self.get_libelle_article(nom) for nom in self.articles}
     
     def generer_excel(self):
         """Génère un fichier Excel avec l'inventaire complet"""
@@ -165,8 +177,8 @@ class GestionnairePieces:
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
-        # En-têtes (ajout de la colonne Emplacement)
-        headers = ["Nom de la pièce", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
+        # En-têtes (ajout des colonnes Libellé et Emplacement)
+        headers = ["Nom de l'article", "Libellé", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
             cell.value = header
@@ -177,31 +189,34 @@ class GestionnairePieces:
         
         # Données du résumé
         row = 2
-        for nom_piece, data in self.pieces.items():
-            total = sum(p['nb_pieces'] for p in data['photos'])
+        for nom_article, data in self.articles.items():
+            total = sum(p['nb_articles'] for p in data['photos'])
             nb_photos = len(data['photos'])
             derniere_date = data['photos'][-1]['timestamp'] if data['photos'] else data.get('date_creation', 'N/A')
             emplacement = data.get('emplacement', '')
+            libelle = data.get('libelle', '')
             
-            sheet_resume.cell(row=row, column=1).value = nom_piece
-            sheet_resume.cell(row=row, column=2).value = emplacement
-            sheet_resume.cell(row=row, column=3).value = total
-            sheet_resume.cell(row=row, column=4).value = nb_photos
-            sheet_resume.cell(row=row, column=5).value = derniere_date
+            sheet_resume.cell(row=row, column=1).value = nom_article
+            sheet_resume.cell(row=row, column=2).value = libelle
+            sheet_resume.cell(row=row, column=3).value = emplacement
+            sheet_resume.cell(row=row, column=4).value = total
+            sheet_resume.cell(row=row, column=5).value = nb_photos
+            sheet_resume.cell(row=row, column=6).value = derniere_date
             row += 1
         
         # Ajuster la largeur des colonnes
-        sheet_resume.column_dimensions['A'].width = 25
-        sheet_resume.column_dimensions['B'].width = 20
-        sheet_resume.column_dimensions['C'].width = 15
+        sheet_resume.column_dimensions['A'].width = 20
+        sheet_resume.column_dimensions['B'].width = 30
+        sheet_resume.column_dimensions['C'].width = 20
         sheet_resume.column_dimensions['D'].width = 15
-        sheet_resume.column_dimensions['E'].width = 22
+        sheet_resume.column_dimensions['E'].width = 15
+        sheet_resume.column_dimensions['F'].width = 22
         
         # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
-        # En-têtes détail (ajout de la colonne Emplacement)
-        detail_headers = ["Pièce", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
+        # En-têtes détail (ajout des colonnes Libellé et Emplacement)
+        detail_headers = ["Article", "Libellé", "Emplacement", "Photo #", "Date", "Nombre d'articles"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
             cell.value = header
@@ -211,22 +226,25 @@ class GestionnairePieces:
         
         # Données détaillées
         row = 2
-        for nom_piece, data in self.pieces.items():
+        for nom_article, data in self.articles.items():
             emplacement = data.get('emplacement', '')
+            libelle = data.get('libelle', '')
             for i, photo in enumerate(data['photos'], 1):
-                sheet_detail.cell(row=row, column=1).value = nom_piece
-                sheet_detail.cell(row=row, column=2).value = emplacement
-                sheet_detail.cell(row=row, column=3).value = f"Photo {i}"
-                sheet_detail.cell(row=row, column=4).value = photo['timestamp']
-                sheet_detail.cell(row=row, column=5).value = photo['nb_pieces']
+                sheet_detail.cell(row=row, column=1).value = nom_article
+                sheet_detail.cell(row=row, column=2).value = libelle
+                sheet_detail.cell(row=row, column=3).value = emplacement
+                sheet_detail.cell(row=row, column=4).value = f"Photo {i}"
+                sheet_detail.cell(row=row, column=5).value = photo['timestamp']
+                sheet_detail.cell(row=row, column=6).value = photo['nb_articles']
                 row += 1
         
         # Ajuster les colonnes du détail
-        sheet_detail.column_dimensions['A'].width = 25
-        sheet_detail.column_dimensions['B'].width = 20
-        sheet_detail.column_dimensions['C'].width = 12
-        sheet_detail.column_dimensions['D'].width = 22
-        sheet_detail.column_dimensions['E'].width = 18
+        sheet_detail.column_dimensions['A'].width = 20
+        sheet_detail.column_dimensions['B'].width = 30
+        sheet_detail.column_dimensions['C'].width = 20
+        sheet_detail.column_dimensions['D'].width = 12
+        sheet_detail.column_dimensions['E'].width = 22
+        sheet_detail.column_dimensions['F'].width = 18
         
         workbook.save(output)
         output.seek(0)
@@ -234,7 +252,7 @@ class GestionnairePieces:
     
     def reinitialiser_tout(self):
         """Réinitialise complètement l'inventaire"""
-        self.pieces = {}
+        self.articles = {}
 
 # Fonction pour détecter et lire les codes-barres
 def detecter_code_barre(image):
@@ -272,9 +290,9 @@ def detecter_code_barre(image):
     
     return resultat, codes_detectes
 
-# Fonction pour détecter les pièces dans une image
-def detecter_pieces(image):
-    """Détecte et compte les pièces dans une image"""
+# Fonction pour détecter les articles dans une image
+def detecter_articles(image):
+    """Détecte et compte les articles dans une image"""
     resultat = image.copy()
     
     # Conversion en niveaux de gris
@@ -295,16 +313,16 @@ def detecter_pieces(image):
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     # Filtrer les petits contours (bruit)
-    pieces_valides = []
+    articles_valides = []
     for contour in contours:
         aire = cv2.contourArea(contour)
         if aire > 200:  # Seuil minimum
-            pieces_valides.append(contour)
+            articles_valides.append(contour)
     
-    nb_pieces = len(pieces_valides)
+    nb_articles = len(articles_valides)
     
     # Dessiner les contours
-    for contour in pieces_valides:
+    for contour in articles_valides:
         # Dessiner le contour en vert
         cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
         
@@ -316,10 +334,10 @@ def detecter_pieces(image):
             cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
     
     # Ajouter le compteur
-    cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
+    cv2.putText(resultat, f"Articles: {nb_articles}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     
-    return resultat, nb_pieces
+    return resultat, nb_articles
 
 # Fonction pour décoder l'image base64
 def base64_to_image(base64_string):
@@ -330,11 +348,11 @@ def base64_to_image(base64_string):
 
 # Initialisation
 if 'gestionnaire' not in st.session_state:
-    st.session_state.gestionnaire = GestionnairePieces()
+    st.session_state.gestionnaire = GestionnaireArticles()
 if 'page' not in st.session_state:
     st.session_state.page = "saisie"
-if 'piece_selectionnee' not in st.session_state:
-    st.session_state.piece_selectionnee = None
+if 'article_selectionne' not in st.session_state:
+    st.session_state.article_selectionne = None
 if 'photo_selectionnee' not in st.session_state:
     st.session_state.photo_selectionnee = None
 if 'code_detecte' not in st.session_state:
@@ -345,36 +363,42 @@ if 'scan_effectue' not in st.session_state:
 gestionnaire = st.session_state.gestionnaire
 
 # Interface principale
-st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
+st.title("📦 Gestionnaire d'Inventaire Multi-Articles avec Scan Code-Barres")
 st.markdown("""
-Cette application permet de gérer l'inventaire de plusieurs types de pièces :
-1. **Scanner** un code-barres pour identifier automatiquement la pièce
-2. **Ajouter** un emplacement de stockage (optionnel)
-3. **Ajouter** plusieurs photos pour cette pièce
-4. **Changer** de pièce et répéter
+Cette application permet de gérer l'inventaire de plusieurs types d'articles :
+1. **Scanner** un code-barres pour identifier automatiquement l'article
+2. **Ajouter** un libellé et un emplacement de stockage (optionnels)
+3. **Ajouter** plusieurs photos pour cet article
+4. **Changer** d'article et répéter
 5. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale avec la liste des pièces
+# Barre latérale avec la liste des articles
 with st.sidebar:
-    st.header("📋 Pièces en inventaire")
+    st.header("📋 Articles en inventaire")
     
-    if gestionnaire.pieces:
-        # Afficher toutes les pièces avec leurs totaux et emplacements
-        for nom_piece in gestionnaire.pieces.keys():
-            total = gestionnaire.get_total_piece(nom_piece)
-            emplacement = gestionnaire.get_emplacement_piece(nom_piece)
+    if gestionnaire.articles:
+        # Afficher tous les articles avec leurs totaux, libellés et emplacements
+        for nom_article in gestionnaire.articles.keys():
+            total = gestionnaire.get_total_article(nom_article)
+            emplacement = gestionnaire.get_emplacement_article(nom_article)
+            libelle = gestionnaire.get_libelle_article(nom_article)
             
             with st.container():
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    if emplacement:
-                        bouton_texte = f"📦 {nom_piece}  <span class='location-badge'>{emplacement}</span>"
+                    if libelle:
+                        affichage = f"📦 {nom_article} - {libelle}"
                     else:
-                        bouton_texte = f"📦 {nom_piece}"
+                        affichage = f"📦 {nom_article}"
                     
-                    if st.button(bouton_texte, key=f"select_{nom_piece}", use_container_width=True):
-                        st.session_state.piece_selectionnee = nom_piece
+                    if emplacement:
+                        bouton_texte = f"{affichage}  <span class='location-badge'>{emplacement}</span>"
+                    else:
+                        bouton_texte = affichage
+                    
+                    if st.button(bouton_texte, key=f"select_{nom_article}", use_container_width=True):
+                        st.session_state.article_selectionne = nom_article
                         st.session_state.page = "details"
                 with col2:
                     st.write(f"**{total}**")
@@ -382,9 +406,9 @@ with st.sidebar:
         st.divider()
         
         # Bouton pour retourner à la saisie
-        if st.button("➕ Nouvelle pièce", use_container_width=True):
+        if st.button("➕ Nouvel article", use_container_width=True):
             st.session_state.page = "saisie"
-            st.session_state.piece_selectionnee = None
+            st.session_state.article_selectionne = None
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.rerun()
@@ -392,7 +416,7 @@ with st.sidebar:
         st.divider()
         
         # Export Excel
-        if gestionnaire.pieces:
+        if gestionnaire.articles:
             st.header("📊 Export")
             excel_file = gestionnaire.generer_excel()
             st.download_button(
@@ -407,20 +431,20 @@ with st.sidebar:
             if st.button("🔄 Tout réinitialiser", type="primary", use_container_width=True):
                 gestionnaire.reinitialiser_tout()
                 st.session_state.page = "saisie"
-                st.session_state.piece_selectionnee = None
+                st.session_state.article_selectionne = None
                 st.rerun()
     else:
-        st.info("Aucune pièce pour le moment")
+        st.info("Aucun article pour le moment")
 
 # Contenu principal
 if st.session_state.page == "saisie":
-    # Page de saisie d'une nouvelle pièce avec scan de code-barres
-    st.header("➕ Ajouter une nouvelle pièce")
+    # Page de saisie d'un nouvel article avec scan de code-barres
+    st.header("➕ Ajouter un nouvel article")
     
     # Section scan de code-barres
     st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
-    st.markdown("### 📷 Scanner le code-barres de la pièce")
-    st.markdown("Prenez une photo du code-barres pour identifier automatiquement la pièce")
+    st.markdown("### 📷 Scanner le code-barres de l'article")
+    st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
     
     col_scan1, col_scan2 = st.columns(2)
     
@@ -497,30 +521,37 @@ if st.session_state.page == "saisie":
     
     st.markdown("---")
     
-    # Formulaire de création de pièce avec emplacement optionnel
-    st.markdown("### 📝 Informations de la pièce")
+    # Formulaire de création d'article avec libellé et emplacement optionnels
+    st.markdown("### 📝 Informations de l'article")
     
     # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
-    input_key = f"nom_piece_input_{st.session_state.code_detecte or 'manuel'}"
+    input_key = f"nom_article_input_{st.session_state.code_detecte or 'manuel'}"
     
     # Définir la valeur par défaut en fonction du code détecté
     default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
-    # Deux colonnes pour le nom et l'emplacement
-    col_nom, col_emp = st.columns([2, 1])
+    # Trois colonnes pour le nom, le libellé et l'emplacement
+    col_nom, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_nom:
-        nom_piece = st.text_input(
-            "Nom de la pièce *",
+        nom_article = st.text_input(
+            "Nom de l'article *",
             value=default_value,
-            placeholder="Nom de la pièce (obligatoire)",
+            placeholder="Nom de l'article (obligatoire)",
             key=input_key
+        )
+    
+    with col_lib:
+        libelle = st.text_input(
+            "Libellé (optionnel)",
+            placeholder="Description de l'article",
+            key="libelle_input"
         )
     
     with col_emp:
         emplacement = st.text_input(
             "Emplacement (optionnel)",
-            placeholder="Ex: A-12, Rayon 3...",
+            placeholder="Ex: A-12",
             key="emplacement_input"
         )
     
@@ -528,51 +559,58 @@ if st.session_state.page == "saisie":
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("✅ Créer la pièce", use_container_width=True):
-            if nom_piece:
-                if gestionnaire.creer_nouvelle_piece(nom_piece, emplacement):
-                    st.success(f"✅ Pièce '{nom_piece}' créée avec succès!")
+        if st.button("✅ Créer l'article", use_container_width=True):
+            if nom_article:
+                if gestionnaire.creer_nouvel_article(nom_article, libelle, emplacement):
+                    st.success(f"✅ Article '{nom_article}' créé avec succès!")
+                    if libelle:
+                        st.info(f"📝 Libellé: {libelle}")
                     if emplacement:
                         st.info(f"📍 Emplacement: {emplacement}")
-                    st.session_state.piece_selectionnee = nom_piece
+                    st.session_state.article_selectionne = nom_article
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
                     st.rerun()
                 else:
-                    st.error("❌ Ce nom de pièce existe déjà")
+                    st.error("❌ Ce nom d'article existe déjà")
             else:
-                st.error("❌ Veuillez entrer un nom de pièce")
+                st.error("❌ Veuillez entrer un nom d'article")
     with col2:
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.rerun()
 
-elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
-    # Page de détails d'une pièce
-    nom_piece = st.session_state.piece_selectionnee
-    photos = gestionnaire.get_photos_piece(nom_piece)
-    total = gestionnaire.get_total_piece(nom_piece)
-    emplacement = gestionnaire.get_emplacement_piece(nom_piece)
+elif st.session_state.page == "details" and st.session_state.article_selectionne:
+    # Page de détails d'un article
+    nom_article = st.session_state.article_selectionne
+    photos = gestionnaire.get_photos_article(nom_article)
+    total = gestionnaire.get_total_article(nom_article)
+    emplacement = gestionnaire.get_emplacement_article(nom_article)
+    libelle = gestionnaire.get_libelle_article(nom_article)
     
-    # En-tête avec emplacement
+    # En-tête avec libellé et emplacement
     col_h1, col_h2, col_h3, col_h4 = st.columns([2, 1, 1, 1])
     with col_h1:
-        st.header(f"📦 {nom_piece}")
+        st.header(f"📦 {nom_article}")
+        if libelle:
+            st.markdown(f"<span class='location-badge'>📝 {libelle}</span>", unsafe_allow_html=True)
         if emplacement:
             st.markdown(f"<span class='location-badge'>📍 {emplacement}</span>", unsafe_allow_html=True)
     with col_h2:
-        st.metric("Total pièces", total)
+        st.metric("Total articles", total)
     with col_h3:
         st.metric("Photos", len(photos))
     with col_h4:
+        if libelle:
+            st.metric("Libellé", libelle[:15] + "..." if len(libelle) > 15 else libelle)
         if emplacement:
             st.metric("Emplacement", emplacement)
     
     # Afficher un badge si le nom est un code
-    if re.match(r'^[A-Z0-9-]+$', nom_piece):
-        st.info(f"🔖 Code produit: {nom_piece}")
+    if re.match(r'^[A-Z0-9-]+$', nom_article):
+        st.info(f"🔖 Code produit: {nom_article}")
     
     # Options
     col_o1, col_o2, col_o3 = st.columns(3)
@@ -586,9 +624,9 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
         if st.button("📸 Ajouter une photo", use_container_width=True):
             st.session_state.ajout_photo = True
     with col_o3:
-        if st.button("🗑️ Supprimer cette pièce", use_container_width=True, type="primary"):
-            if gestionnaire.supprimer_piece(nom_piece):
-                st.success(f"✅ Pièce '{nom_piece}' supprimée")
+        if st.button("🗑️ Supprimer cet article", use_container_width=True, type="primary"):
+            if gestionnaire.supprimer_article(nom_article):
+                st.success(f"✅ Article '{nom_article}' supprimé")
                 st.session_state.page = "saisie"
                 st.rerun()
     
@@ -613,10 +651,10 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
                 with st.spinner("Analyse..."):
                     bytes_data = img_file.getvalue()
                     frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                    resultat, nb_pieces = detecter_pieces(frame)
+                    resultat, nb_articles = detecter_articles(frame)
                     
-                    if gestionnaire.ajouter_photo_piece(nom_piece, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                    if gestionnaire.ajouter_photo_article(nom_article, frame, resultat, nb_articles):
+                        st.success(f"✅ {nb_articles} articles détectés et ajoutés!")
                         st.session_state.ajout_photo = False
                         st.rerun()
         
@@ -626,10 +664,10 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
                 with st.spinner("Analyse..."):
                     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
                     frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                    resultat, nb_pieces = detecter_pieces(frame)
+                    resultat, nb_articles = detecter_articles(frame)
                     
-                    if gestionnaire.ajouter_photo_piece(nom_piece, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                    if gestionnaire.ajouter_photo_article(nom_article, frame, resultat, nb_articles):
+                        st.success(f"✅ {nb_articles} articles détectés et ajoutés!")
                         st.session_state.ajout_photo = False
                         st.rerun()
     
@@ -640,7 +678,7 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
         # Options d'affichage
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            tri = st.selectbox("Trier par", ["Plus récente", "Plus ancienne", "Plus de pièces", "Moins de pièces"])
+            tri = st.selectbox("Trier par", ["Plus récente", "Plus ancienne", "Plus d'articles", "Moins d'articles"])
         
         # Trier les photos
         photos_affichees = photos.copy()
@@ -648,10 +686,10 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
             photos_affichees = list(reversed(photos_affichees))
         elif tri == "Plus ancienne":
             photos_affichees = photos_affichees
-        elif tri == "Plus de pièces":
-            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'], reverse=True)
-        elif tri == "Moins de pièces":
-            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'])
+        elif tri == "Plus d'articles":
+            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_articles'], reverse=True)
+        elif tri == "Moins d'articles":
+            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_articles'])
         
         # Afficher les photos en grille
         cols = st.columns(3)
@@ -664,33 +702,33 @@ elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
                 
                 # Informations
                 st.caption(f"📅 {photo['timestamp'][:10]}")
-                st.caption(f"🔢 {photo['nb_pieces']} pièces")
+                st.caption(f"🔢 {photo['nb_articles']} articles")
                 
                 # Boutons
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
-                    if st.button("🔍 Voir", key=f"view_{nom_piece}_{i}"):
+                    if st.button("🔍 Voir", key=f"view_{nom_article}_{i}"):
                         st.session_state.photo_selectionnee = photo['id']
                         st.session_state.page = "photo_detail"
                         st.rerun()
                 with col_b2:
-                    if st.button("🗑️", key=f"del_{nom_piece}_{i}"):
-                        if gestionnaire.supprimer_photo(nom_piece, photo['id']):
+                    if st.button("🗑️", key=f"del_{nom_article}_{i}"):
+                        if gestionnaire.supprimer_photo(nom_article, photo['id']):
                             st.rerun()
     
     else:
-        st.info("📸 Aucune photo pour cette pièce. Cliquez sur 'Ajouter une photo' pour commencer.")
+        st.info("📸 Aucune photo pour cet article. Cliquez sur 'Ajouter une photo' pour commencer.")
 
-elif st.session_state.page == "photo_detail" and st.session_state.piece_selectionnee and st.session_state.photo_selectionnee is not None:
+elif st.session_state.page == "photo_detail" and st.session_state.article_selectionne and st.session_state.photo_selectionnee is not None:
     # Détail d'une photo spécifique
-    nom_piece = st.session_state.piece_selectionnee
-    photos = gestionnaire.get_photos_piece(nom_piece)
+    nom_article = st.session_state.article_selectionne
+    photos = gestionnaire.get_photos_article(nom_article)
     photo_id = st.session_state.photo_selectionnee
     
     if 0 <= photo_id < len(photos):
         photo = photos[photo_id]
         
-        st.header(f"🔍 Détail de la photo - {nom_piece}")
+        st.header(f"🔍 Détail de la photo - {nom_article}")
         
         # Afficher les deux images
         col_img1, col_img2 = st.columns(2)
@@ -701,24 +739,24 @@ elif st.session_state.page == "photo_detail" and st.session_state.piece_selectio
             st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
         
         with col_img2:
-            st.subheader(f"🔍 Analyse - {photo['nb_pieces']} pièces")
+            st.subheader(f"🔍 Analyse - {photo['nb_articles']} articles")
             img_analyse = base64_to_image(photo['image_analyse'])
             st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
         
         # Informations
-        st.metric("Nombre de pièces", photo['nb_pieces'])
+        st.metric("Nombre d'articles", photo['nb_articles'])
         st.caption(f"Date: {photo['timestamp']}")
         
         # Boutons
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            if st.button("⬅️ Retour à la pièce", use_container_width=True):
+            if st.button("⬅️ Retour à l'article", use_container_width=True):
                 st.session_state.page = "details"
                 st.session_state.photo_selectionnee = None
                 st.rerun()
         with col_b2:
             if st.button("🗑️ Supprimer cette photo", use_container_width=True, type="primary"):
-                if gestionnaire.supprimer_photo(nom_piece, photo_id):
+                if gestionnaire.supprimer_photo(nom_article, photo_id):
                     st.session_state.page = "details"
                     st.session_state.photo_selectionnee = None
                     st.rerun()
@@ -736,9 +774,10 @@ with col_f1:
     st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
-    st.caption(f"🧩 Total global: {total_global} pièces")
+    st.caption(f"🧩 Total global: {total_global} articles")
 with col_f3:
-    st.caption(f"📊 Types: {len(gestionnaire.pieces)}")
+    st.caption(f"📊 Types: {len(gestionnaire.articles)}")
 with col_f4:
     emplacements_renseignes = sum(1 for e in gestionnaire.get_tous_emplacements().values() if e)
-    st.caption(f"📍 Emplacements: {emplacements_renseignes}/{len(gestionnaire.pieces)}")
+    libelles_renseignes = sum(1 for l in gestionnaire.get_tous_libelles().values() if l)
+    st.caption(f"📍 Emp.: {emplacements_renseignes}/{len(gestionnaire.articles)} | 📝 Lib.: {libelles_renseignes}/{len(gestionnaire.articles)}")
