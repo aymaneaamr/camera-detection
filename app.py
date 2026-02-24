@@ -438,6 +438,8 @@ if 'libelle_auto' not in st.session_state:
     st.session_state.libelle_auto = ""
 if 'libelle_input_value' not in st.session_state:
     st.session_state.libelle_input_value = ""
+if 'previous_code' not in st.session_state:
+    st.session_state.previous_code = ""
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -499,6 +501,7 @@ with st.sidebar:
             st.session_state.scan_effectue = False
             st.session_state.libelle_auto = ""
             st.session_state.libelle_input_value = ""
+            st.session_state.previous_code = ""
             st.rerun()
         
         st.divider()
@@ -524,6 +527,7 @@ with st.sidebar:
                 st.session_state.scan_effectue = False
                 st.session_state.libelle_auto = ""
                 st.session_state.libelle_input_value = ""
+                st.session_state.previous_code = ""
                 st.rerun()
     else:
         st.info("Aucun article pour le moment")
@@ -561,6 +565,7 @@ if st.session_state.page == "saisie":
                     # Mettre à jour le libellé automatique
                     st.session_state.libelle_auto = get_libelle_automatique(code_trouve)
                     st.session_state.libelle_input_value = st.session_state.libelle_auto
+                    st.session_state.previous_code = code_trouve
                     
                     # Afficher l'image avec le code détecté
                     st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
@@ -576,6 +581,7 @@ if st.session_state.page == "saisie":
                     
                     if st.session_state.libelle_auto:
                         st.info(f"📝 Libellé automatique trouvé : {st.session_state.libelle_auto}")
+                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -600,6 +606,7 @@ if st.session_state.page == "saisie":
                     # Mettre à jour le libellé automatique
                     st.session_state.libelle_auto = get_libelle_automatique(code_trouve)
                     st.session_state.libelle_input_value = st.session_state.libelle_auto
+                    st.session_state.previous_code = code_trouve
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -611,6 +618,7 @@ if st.session_state.page == "saisie":
                     
                     if st.session_state.libelle_auto:
                         st.info(f"📝 Libellé automatique trouvé : {st.session_state.libelle_auto}")
+                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -623,6 +631,7 @@ if st.session_state.page == "saisie":
             st.session_state.code_detecte = None
             st.session_state.libelle_auto = ""
             st.session_state.libelle_input_value = ""
+            st.session_state.previous_code = ""
             st.rerun()
     
     st.markdown("---")
@@ -633,32 +642,32 @@ if st.session_state.page == "saisie":
     # Définir la valeur par défaut en fonction du code détecté
     default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
-    # Si on a un code détecté mais pas encore de libellé dans l'input, on le met à jour
+    # Si on a un code détecté et que le libellé n'est pas encore défini, on le met à jour
     if default_code and st.session_state.libelle_input_value == "":
         st.session_state.libelle_input_value = get_libelle_automatique(default_code)
+        st.session_state.previous_code = default_code
     
     # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 3, 1])
     
     with col_code:
-        # Fonction de rappel pour mettre à jour le libellé quand le code change
-        def on_code_change():
-            code = st.session_state.code_input
-            if code:
-                # Chercher le libellé correspondant
-                libelle_trouve = get_libelle_automatique(code)
-                if libelle_trouve:
-                    st.session_state.libelle_input_value = libelle_trouve
-                else:
-                    st.session_state.libelle_input_value = ""
-        
         code_article = st.text_input(
             "Code article *",
             value=default_code,
             placeholder="Code article (obligatoire)",
-            key="code_input",
-            on_change=on_code_change
+            key="code_input"
         )
+        
+        # Vérifier si le code a changé et mettre à jour le libellé
+        if code_article and code_article != st.session_state.previous_code:
+            # Chercher le libellé correspondant
+            libelle_trouve = get_libelle_automatique(code_article)
+            if libelle_trouve:
+                st.session_state.libelle_input_value = libelle_trouve
+            else:
+                st.session_state.libelle_input_value = ""
+            st.session_state.previous_code = code_article
+            st.rerun()
     
     with col_lib:
         libelle = st.text_input(
@@ -693,6 +702,7 @@ if st.session_state.page == "saisie":
                     st.session_state.scan_effectue = False
                     st.session_state.libelle_auto = ""
                     st.session_state.libelle_input_value = ""
+                    st.session_state.previous_code = ""
                     st.rerun()
                 else:
                     st.error("❌ Ce code article existe déjà")
@@ -704,6 +714,7 @@ if st.session_state.page == "saisie":
             st.session_state.scan_effectue = False
             st.session_state.libelle_auto = ""
             st.session_state.libelle_input_value = ""
+            st.session_state.previous_code = ""
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -747,6 +758,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             st.session_state.scan_effectue = False
             st.session_state.libelle_auto = ""
             st.session_state.libelle_input_value = ""
+            st.session_state.previous_code = ""
             st.rerun()
     with col_o2:
         if st.button("📸 Ajouter une photo", use_container_width=True):
