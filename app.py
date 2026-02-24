@@ -61,58 +61,6 @@ st.markdown("""
         border-radius: 5px;
         font-size: 0.8rem;
         margin-left: 0.5rem;
-        display: inline-block;
-    }
-    .label-badge {
-        background: #28a745;
-        color: white;
-        padding: 0.2rem 0.5rem;
-        border-radius: 5px;
-        font-size: 0.8rem;
-        margin-left: 0.5rem;
-        display: inline-block;
-    }
-    .piece-card {
-        background: white;
-        border-radius: 8px;
-        padding: 10px;
-        margin-bottom: 8px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .piece-card:hover {
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        border-color: #667eea;
-    }
-    .piece-name {
-        font-weight: bold;
-        color: #2c3e50;
-    }
-    .piece-location {
-        background: #17a2b8;
-        color: white;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        display: inline-block;
-        margin-left: 5px;
-    }
-    .piece-label {
-        background: #28a745;
-        color: white;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        display: inline-block;
-        margin-left: 5px;
-    }
-    .piece-total {
-        background: #667eea;
-        color: white;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        display: inline-block;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -120,34 +68,32 @@ st.markdown("""
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
-        self.pieces = {}  # Dictionnaire {article: {"photos": [], "emplacement": "", "libelle": ""}}
-        self.reset_article_courant()
+        self.pieces = {}  # Dictionnaire {nom_piece: {"photos": [], "emplacement": ""}}
+        self.reset_piece_courante()
     
-    def reset_article_courant(self):
-        """Réinitialise l'article en cours de saisie"""
-        self.article_courant = {
-            'article': '',
+    def reset_piece_courante(self):
+        """Réinitialise la pièce en cours de saisie"""
+        self.piece_courante = {
+            'nom': '',
             'emplacement': '',
-            'libelle': '',
             'photos': [],
             'total_pieces': 0
         }
     
-    def creer_nouvel_article(self, article, emplacement="", libelle=""):
-        """Crée un nouvel article dans l'inventaire avec son emplacement et libellé"""
-        if article and article not in self.pieces:
-            self.pieces[article] = {
+    def creer_nouvelle_piece(self, nom_piece, emplacement=""):
+        """Crée une nouvelle pièce dans l'inventaire avec son emplacement"""
+        if nom_piece and nom_piece not in self.pieces:
+            self.pieces[nom_piece] = {
                 'photos': [],
                 'emplacement': emplacement,
-                'libelle': libelle,
                 'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             return True
         return False
     
-    def ajouter_photo_article(self, article, frame_original, frame_analyse, nb_pieces):
-        """Ajoute une photo analysée à un article existant"""
-        if article in self.pieces:
+    def ajouter_photo_piece(self, nom_piece, frame_original, frame_analyse, nb_pieces):
+        """Ajoute une photo analysée à une pièce existante"""
+        if nom_piece in self.pieces:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             # Convertir les images en base64
@@ -159,65 +105,55 @@ class GestionnairePieces:
                 'nb_pieces': nb_pieces,
                 'image_originale': base64.b64encode(buffer_original).decode('utf-8'),
                 'image_analyse': base64.b64encode(buffer_analyse).decode('utf-8'),
-                'id': len(self.pieces[article]['photos'])
+                'id': len(self.pieces[nom_piece]['photos'])
             }
             
-            self.pieces[article]['photos'].append(photo_data)
+            self.pieces[nom_piece]['photos'].append(photo_data)
             return True
         return False
     
-    def get_total_article(self, article):
-        """Retourne le total de pièces pour un article donné"""
-        if article in self.pieces:
-            return sum(photo['nb_pieces'] for photo in self.pieces[article]['photos'])
+    def get_total_piece(self, nom_piece):
+        """Retourne le total de pièces pour un nom donné"""
+        if nom_piece in self.pieces:
+            return sum(photo['nb_pieces'] for photo in self.pieces[nom_piece]['photos'])
         return 0
     
-    def get_photos_article(self, article):
-        """Retourne toutes les photos d'un article"""
-        if article in self.pieces:
-            return self.pieces[article]['photos']
+    def get_photos_piece(self, nom_piece):
+        """Retourne toutes les photos d'une pièce"""
+        if nom_piece in self.pieces:
+            return self.pieces[nom_piece]['photos']
         return []
     
-    def get_emplacement_article(self, article):
-        """Retourne l'emplacement d'un article"""
-        if article in self.pieces:
-            return self.pieces[article].get('emplacement', '')
+    def get_emplacement_piece(self, nom_piece):
+        """Retourne l'emplacement d'une pièce"""
+        if nom_piece in self.pieces:
+            return self.pieces[nom_piece].get('emplacement', '')
         return ''
     
-    def get_libelle_article(self, article):
-        """Retourne le libellé d'un article"""
-        if article in self.pieces:
-            return self.pieces[article].get('libelle', '')
-        return ''
-    
-    def supprimer_photo(self, article, photo_id):
-        """Supprime une photo d'un article"""
-        if article in self.pieces and 0 <= photo_id < len(self.pieces[article]['photos']):
-            del self.pieces[article]['photos'][photo_id]
+    def supprimer_photo(self, nom_piece, photo_id):
+        """Supprime une photo d'une pièce"""
+        if nom_piece in self.pieces and 0 <= photo_id < len(self.pieces[nom_piece]['photos']):
+            del self.pieces[nom_piece]['photos'][photo_id]
             # Réindexer les IDs
-            for i, photo in enumerate(self.pieces[article]['photos']):
+            for i, photo in enumerate(self.pieces[nom_piece]['photos']):
                 photo['id'] = i
             return True
         return False
     
-    def supprimer_article(self, article):
-        """Supprime complètement un article"""
-        if article in self.pieces:
-            del self.pieces[article]
+    def supprimer_piece(self, nom_piece):
+        """Supprime complètement une pièce"""
+        if nom_piece in self.pieces:
+            del self.pieces[nom_piece]
             return True
         return False
     
     def get_tous_les_totaux(self):
-        """Retourne un dictionnaire avec tous les totaux par article"""
-        return {article: self.get_total_article(article) for article in self.pieces}
+        """Retourne un dictionnaire avec tous les totaux par pièce"""
+        return {nom: self.get_total_piece(nom) for nom in self.pieces}
     
     def get_tous_emplacements(self):
-        """Retourne un dictionnaire avec tous les emplacements par article"""
-        return {article: self.get_emplacement_article(article) for article in self.pieces}
-    
-    def get_tous_libelles(self):
-        """Retourne un dictionnaire avec tous les libellés par article"""
-        return {article: self.get_libelle_article(article) for article in self.pieces}
+        """Retourne un dictionnaire avec tous les emplacements par pièce"""
+        return {nom: self.get_emplacement_piece(nom) for nom in self.pieces}
     
     def generer_excel(self):
         """Génère un fichier Excel avec l'inventaire complet"""
@@ -225,98 +161,72 @@ class GestionnairePieces:
         output = BytesIO()
         workbook = openpyxl.Workbook()
         
-        # Style
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill_bleu = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_fill_vert = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
-        border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        
         # Feuille principale - Résumé
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
-        # En-têtes (ajout des colonnes Emplacement et Libellé)
-        headers = ["Article", "Emplacement", "Libellé", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
+        # En-têtes (ajout de la colonne Emplacement)
+        headers = ["Nom de la pièce", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
             cell.value = header
-            cell.font = header_font
-            cell.fill = header_fill_bleu
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True)
             cell.alignment = Alignment(horizontal="center")
-            cell.border = border
         
         # Données du résumé
         row = 2
-        for article, data in self.pieces.items():
+        for nom_piece, data in self.pieces.items():
             total = sum(p['nb_pieces'] for p in data['photos'])
             nb_photos = len(data['photos'])
             derniere_date = data['photos'][-1]['timestamp'] if data['photos'] else data.get('date_creation', 'N/A')
             emplacement = data.get('emplacement', '')
-            libelle = data.get('libelle', '')
             
-            sheet_resume.cell(row=row, column=1).value = article
+            sheet_resume.cell(row=row, column=1).value = nom_piece
             sheet_resume.cell(row=row, column=2).value = emplacement
-            sheet_resume.cell(row=row, column=3).value = libelle
-            sheet_resume.cell(row=row, column=4).value = total
-            sheet_resume.cell(row=row, column=5).value = nb_photos
-            sheet_resume.cell(row=row, column=6).value = derniere_date
-            
-            for col in range(1, 7):
-                cell = sheet_resume.cell(row=row, column=col)
-                cell.border = border
+            sheet_resume.cell(row=row, column=3).value = total
+            sheet_resume.cell(row=row, column=4).value = nb_photos
+            sheet_resume.cell(row=row, column=5).value = derniere_date
             row += 1
         
         # Ajuster la largeur des colonnes
         sheet_resume.column_dimensions['A'].width = 25
         sheet_resume.column_dimensions['B'].width = 20
-        sheet_resume.column_dimensions['C'].width = 30
+        sheet_resume.column_dimensions['C'].width = 15
         sheet_resume.column_dimensions['D'].width = 15
-        sheet_resume.column_dimensions['E'].width = 15
-        sheet_resume.column_dimensions['F'].width = 22
+        sheet_resume.column_dimensions['E'].width = 22
         
         # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
-        # En-têtes détail (ajout des colonnes Emplacement et Libellé)
-        detail_headers = ["Article", "Emplacement", "Libellé", "Photo #", "Date", "Nombre de pièces"]
+        # En-têtes détail (ajout de la colonne Emplacement)
+        detail_headers = ["Pièce", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
             cell.value = header
-            cell.font = header_font
-            cell.fill = header_fill_vert
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
             cell.alignment = Alignment(horizontal="center")
-            cell.border = border
         
         # Données détaillées
         row = 2
-        for article, data in self.pieces.items():
+        for nom_piece, data in self.pieces.items():
             emplacement = data.get('emplacement', '')
-            libelle = data.get('libelle', '')
             for i, photo in enumerate(data['photos'], 1):
-                sheet_detail.cell(row=row, column=1).value = article
+                sheet_detail.cell(row=row, column=1).value = nom_piece
                 sheet_detail.cell(row=row, column=2).value = emplacement
-                sheet_detail.cell(row=row, column=3).value = libelle
-                sheet_detail.cell(row=row, column=4).value = f"Photo {i}"
-                sheet_detail.cell(row=row, column=5).value = photo['timestamp']
-                sheet_detail.cell(row=row, column=6).value = photo['nb_pieces']
-                
-                for col in range(1, 7):
-                    cell = sheet_detail.cell(row=row, column=col)
-                    cell.border = border
+                sheet_detail.cell(row=row, column=3).value = f"Photo {i}"
+                sheet_detail.cell(row=row, column=4).value = photo['timestamp']
+                sheet_detail.cell(row=row, column=5).value = photo['nb_pieces']
                 row += 1
         
         # Ajuster les colonnes du détail
         sheet_detail.column_dimensions['A'].width = 25
         sheet_detail.column_dimensions['B'].width = 20
-        sheet_detail.column_dimensions['C'].width = 30
-        sheet_detail.column_dimensions['D'].width = 12
-        sheet_detail.column_dimensions['E'].width = 22
-        sheet_detail.column_dimensions['F'].width = 18
+        sheet_detail.column_dimensions['C'].width = 12
+        sheet_detail.column_dimensions['D'].width = 22
+        sheet_detail.column_dimensions['E'].width = 18
         
         workbook.save(output)
         output.seek(0)
@@ -423,70 +333,58 @@ if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
 if 'page' not in st.session_state:
     st.session_state.page = "saisie"
-if 'article_selectionne' not in st.session_state:
-    st.session_state.article_selectionne = None
+if 'piece_selectionnee' not in st.session_state:
+    st.session_state.piece_selectionnee = None
 if 'photo_selectionnee' not in st.session_state:
     st.session_state.photo_selectionnee = None
 if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
-if 'ajout_photo' not in st.session_state:
-    st.session_state.ajout_photo = False
 
 gestionnaire = st.session_state.gestionnaire
 
 # Interface principale
-st.title("📦 Gestionnaire d'Inventaire avec Scan Code-Barres")
+st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
 st.markdown("""
-Cette application permet de gérer l'inventaire de plusieurs articles :
-1. **Scanner** un code-barres pour identifier automatiquement l'article
+Cette application permet de gérer l'inventaire de plusieurs types de pièces :
+1. **Scanner** un code-barres pour identifier automatiquement la pièce
 2. **Ajouter** un emplacement de stockage (optionnel)
-3. **Ajouter** un libellé descriptif (optionnel)
-4. **Ajouter** plusieurs photos pour cet article
-5. **Changer** d'article et répéter
-6. **Exporter** un fichier Excel avec tous les totaux
+3. **Ajouter** plusieurs photos pour cette pièce
+4. **Changer** de pièce et répéter
+5. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale avec la liste des articles
+# Barre latérale avec la liste des pièces
 with st.sidebar:
-    st.header("📋 Articles en inventaire")
+    st.header("📋 Pièces en inventaire")
     
     if gestionnaire.pieces:
-        for article in gestionnaire.pieces.keys():
-            total = gestionnaire.get_total_article(article)
-            emplacement = gestionnaire.get_emplacement_article(article)
-            libelle = gestionnaire.get_libelle_article(article)
+        # Afficher toutes les pièces avec leurs totaux et emplacements
+        for nom_piece in gestionnaire.pieces.keys():
+            total = gestionnaire.get_total_piece(nom_piece)
+            emplacement = gestionnaire.get_emplacement_piece(nom_piece)
             
-            # Créer un conteneur pour chaque article
             with st.container():
                 col1, col2 = st.columns([3, 1])
-                
                 with col1:
-                    # Afficher l'article avec l'emplacement et le libellé en markdown
-                    display_text = f"**📦 {article}**"
-                    if libelle:
-                        display_text += f"\n📝 `{libelle}`"
                     if emplacement:
-                        display_text += f"\n📍 `{emplacement}`"
+                        bouton_texte = f"📦 {nom_piece}  <span class='location-badge'>{emplacement}</span>"
+                    else:
+                        bouton_texte = f"📦 {nom_piece}"
                     
-                    st.markdown(display_text)
-                    
-                    # Bouton de sélection
-                    if st.button("Sélectionner", key=f"select_{article}", use_container_width=True):
-                        st.session_state.article_selectionne = article
+                    if st.button(bouton_texte, key=f"select_{nom_piece}", use_container_width=True):
+                        st.session_state.piece_selectionnee = nom_piece
                         st.session_state.page = "details"
-                        st.rerun()
-                
                 with col2:
-                    st.markdown(f"**{total}**")
-                
-                st.divider()
+                    st.write(f"**{total}**")
+        
+        st.divider()
         
         # Bouton pour retourner à la saisie
-        if st.button("➕ Nouvel article", use_container_width=True):
+        if st.button("➕ Nouvelle pièce", use_container_width=True):
             st.session_state.page = "saisie"
-            st.session_state.article_selectionne = None
+            st.session_state.piece_selectionnee = None
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.rerun()
@@ -509,20 +407,20 @@ with st.sidebar:
             if st.button("🔄 Tout réinitialiser", type="primary", use_container_width=True):
                 gestionnaire.reinitialiser_tout()
                 st.session_state.page = "saisie"
-                st.session_state.article_selectionne = None
+                st.session_state.piece_selectionnee = None
                 st.rerun()
     else:
-        st.info("Aucun article pour le moment")
+        st.info("Aucune pièce pour le moment")
 
 # Contenu principal
 if st.session_state.page == "saisie":
-    # Page de saisie d'un nouvel article avec scan de code-barres
-    st.header("➕ Ajouter un nouvel article")
+    # Page de saisie d'une nouvelle pièce avec scan de code-barres
+    st.header("➕ Ajouter une nouvelle pièce")
     
     # Section scan de code-barres
     st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
-    st.markdown("### 📷 Scanner le code-barres de l'article")
-    st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
+    st.markdown("### 📷 Scanner le code-barres de la pièce")
+    st.markdown("Prenez une photo du code-barres pour identifier automatiquement la pièce")
     
     col_scan1, col_scan2 = st.columns(2)
     
@@ -599,23 +497,23 @@ if st.session_state.page == "saisie":
     
     st.markdown("---")
     
-    # Formulaire de création d'article avec emplacement et libellé optionnels
-    st.markdown("### 📝 Informations de l'article")
+    # Formulaire de création de pièce avec emplacement optionnel
+    st.markdown("### 📝 Informations de la pièce")
     
     # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
-    input_key = f"article_input_{st.session_state.code_detecte or 'manuel'}"
+    input_key = f"nom_piece_input_{st.session_state.code_detecte or 'manuel'}"
     
     # Définir la valeur par défaut en fonction du code détecté
     default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
-    # Trois colonnes pour l'article, l'emplacement et le libellé
-    col_art, col_emp, col_lib = st.columns([2, 1, 2])
+    # Deux colonnes pour le nom et l'emplacement
+    col_nom, col_emp = st.columns([2, 1])
     
-    with col_art:
-        article = st.text_input(
-            "Article *",
+    with col_nom:
+        nom_piece = st.text_input(
+            "Nom de la pièce *",
             value=default_value,
-            placeholder="Code article (obligatoire)",
+            placeholder="Nom de la pièce (obligatoire)",
             key=input_key
         )
     
@@ -626,54 +524,42 @@ if st.session_state.page == "saisie":
             key="emplacement_input"
         )
     
-    with col_lib:
-        libelle = st.text_input(
-            "Libellé (optionnel)",
-            placeholder="Description de l'article...",
-            key="libelle_input"
-        )
-    
     st.caption("* Champ obligatoire")
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("✅ Créer l'article", use_container_width=True):
-            if article:
-                if gestionnaire.creer_nouvel_article(article, emplacement, libelle):
-                    st.success(f"✅ Article '{article}' créé avec succès!")
+        if st.button("✅ Créer la pièce", use_container_width=True):
+            if nom_piece:
+                if gestionnaire.creer_nouvelle_piece(nom_piece, emplacement):
+                    st.success(f"✅ Pièce '{nom_piece}' créée avec succès!")
                     if emplacement:
                         st.info(f"📍 Emplacement: {emplacement}")
-                    if libelle:
-                        st.info(f"📝 Libellé: {libelle}")
-                    st.session_state.article_selectionne = article
+                    st.session_state.piece_selectionnee = nom_piece
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
                     st.rerun()
                 else:
-                    st.error("❌ Cet article existe déjà")
+                    st.error("❌ Ce nom de pièce existe déjà")
             else:
-                st.error("❌ Veuillez entrer un code article")
+                st.error("❌ Veuillez entrer un nom de pièce")
     with col2:
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.rerun()
 
-elif st.session_state.page == "details" and st.session_state.article_selectionne:
-    # Page de détails d'un article
-    article = st.session_state.article_selectionne
-    photos = gestionnaire.get_photos_article(article)
-    total = gestionnaire.get_total_article(article)
-    emplacement = gestionnaire.get_emplacement_article(article)
-    libelle = gestionnaire.get_libelle_article(article)
+elif st.session_state.page == "details" and st.session_state.piece_selectionnee:
+    # Page de détails d'une pièce
+    nom_piece = st.session_state.piece_selectionnee
+    photos = gestionnaire.get_photos_piece(nom_piece)
+    total = gestionnaire.get_total_piece(nom_piece)
+    emplacement = gestionnaire.get_emplacement_piece(nom_piece)
     
-    # En-tête avec emplacement et libellé
+    # En-tête avec emplacement
     col_h1, col_h2, col_h3, col_h4 = st.columns([2, 1, 1, 1])
     with col_h1:
-        st.header(f"📦 {article}")
-        if libelle:
-            st.markdown(f"<span class='label-badge'>📝 {libelle}</span>", unsafe_allow_html=True)
+        st.header(f"📦 {nom_piece}")
         if emplacement:
             st.markdown(f"<span class='location-badge'>📍 {emplacement}</span>", unsafe_allow_html=True)
     with col_h2:
@@ -682,7 +568,11 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         st.metric("Photos", len(photos))
     with col_h4:
         if emplacement:
-            st.metric("Emplacement", emplacement[:10] + "..." if len(emplacement) > 10 else emplacement)
+            st.metric("Emplacement", emplacement)
+    
+    # Afficher un badge si le nom est un code
+    if re.match(r'^[A-Z0-9-]+$', nom_piece):
+        st.info(f"🔖 Code produit: {nom_piece}")
     
     # Options
     col_o1, col_o2, col_o3 = st.columns(3)
@@ -696,9 +586,9 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         if st.button("📸 Ajouter une photo", use_container_width=True):
             st.session_state.ajout_photo = True
     with col_o3:
-        if st.button("🗑️ Supprimer cet article", use_container_width=True, type="primary"):
-            if gestionnaire.supprimer_article(article):
-                st.success(f"✅ Article '{article}' supprimé")
+        if st.button("🗑️ Supprimer cette pièce", use_container_width=True, type="primary"):
+            if gestionnaire.supprimer_piece(nom_piece):
+                st.success(f"✅ Pièce '{nom_piece}' supprimée")
                 st.session_state.page = "saisie"
                 st.rerun()
     
@@ -725,7 +615,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                     frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                     resultat, nb_pieces = detecter_pieces(frame)
                     
-                    if gestionnaire.ajouter_photo_article(article, frame, resultat, nb_pieces):
+                    if gestionnaire.ajouter_photo_piece(nom_piece, frame, resultat, nb_pieces):
                         st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
                         st.session_state.ajout_photo = False
                         st.rerun()
@@ -738,7 +628,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                     frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                     resultat, nb_pieces = detecter_pieces(frame)
                     
-                    if gestionnaire.ajouter_photo_article(article, frame, resultat, nb_pieces):
+                    if gestionnaire.ajouter_photo_piece(nom_piece, frame, resultat, nb_pieces):
                         st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
                         st.session_state.ajout_photo = False
                         st.rerun()
@@ -779,28 +669,28 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                 # Boutons
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
-                    if st.button("🔍 Voir", key=f"view_{article}_{i}"):
+                    if st.button("🔍 Voir", key=f"view_{nom_piece}_{i}"):
                         st.session_state.photo_selectionnee = photo['id']
                         st.session_state.page = "photo_detail"
                         st.rerun()
                 with col_b2:
-                    if st.button("🗑️", key=f"del_{article}_{i}"):
-                        if gestionnaire.supprimer_photo(article, photo['id']):
+                    if st.button("🗑️", key=f"del_{nom_piece}_{i}"):
+                        if gestionnaire.supprimer_photo(nom_piece, photo['id']):
                             st.rerun()
     
     else:
-        st.info("📸 Aucune photo pour cet article. Cliquez sur 'Ajouter une photo' pour commencer.")
+        st.info("📸 Aucune photo pour cette pièce. Cliquez sur 'Ajouter une photo' pour commencer.")
 
-elif st.session_state.page == "photo_detail" and st.session_state.article_selectionne and st.session_state.photo_selectionnee is not None:
+elif st.session_state.page == "photo_detail" and st.session_state.piece_selectionnee and st.session_state.photo_selectionnee is not None:
     # Détail d'une photo spécifique
-    article = st.session_state.article_selectionne
-    photos = gestionnaire.get_photos_article(article)
+    nom_piece = st.session_state.piece_selectionnee
+    photos = gestionnaire.get_photos_piece(nom_piece)
     photo_id = st.session_state.photo_selectionnee
     
     if 0 <= photo_id < len(photos):
         photo = photos[photo_id]
         
-        st.header(f"🔍 Détail de la photo - {article}")
+        st.header(f"🔍 Détail de la photo - {nom_piece}")
         
         # Afficher les deux images
         col_img1, col_img2 = st.columns(2)
@@ -822,13 +712,13 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
         # Boutons
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            if st.button("⬅️ Retour à l'article", use_container_width=True):
+            if st.button("⬅️ Retour à la pièce", use_container_width=True):
                 st.session_state.page = "details"
                 st.session_state.photo_selectionnee = None
                 st.rerun()
         with col_b2:
             if st.button("🗑️ Supprimer cette photo", use_container_width=True, type="primary"):
-                if gestionnaire.supprimer_photo(article, photo_id):
+                if gestionnaire.supprimer_photo(nom_piece, photo_id):
                     st.session_state.page = "details"
                     st.session_state.photo_selectionnee = None
                     st.rerun()
@@ -843,13 +733,12 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
 with col_f3:
-    st.caption(f"📊 Articles: {len(gestionnaire.pieces)}")
+    st.caption(f"📊 Types: {len(gestionnaire.pieces)}")
 with col_f4:
     emplacements_renseignes = sum(1 for e in gestionnaire.get_tous_emplacements().values() if e)
-    libelles_renseignes = sum(1 for l in gestionnaire.get_tous_libelles().values() if l)
-    st.caption(f"📍 {emplacements_renseignes}/{len(gestionnaire.pieces)} | 📝 {libelles_renseignes}/{len(gestionnaire.pieces)}")
+    st.caption(f"📍 Emplacements: {emplacements_renseignes}/{len(gestionnaire.pieces)}")
