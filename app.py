@@ -395,8 +395,6 @@ if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
 if 'libelle_value' not in st.session_state:
     st.session_state.libelle_value = ""
-if 'dernier_code' not in st.session_state:
-    st.session_state.dernier_code = ""
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -455,7 +453,6 @@ with st.sidebar:
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.session_state.libelle_value = ""
-            st.session_state.dernier_code = ""
             st.rerun()
         
         st.divider()
@@ -534,7 +531,6 @@ if st.session_state.page == "saisie":
                     # Mettre à jour le libellé si le code existe dans la base
                     if code_trouve in ARTICLES_PREDEFINIS:
                         st.session_state.libelle_value = ARTICLES_PREDEFINIS[code_trouve]
-                        st.session_state.dernier_code = code_trouve
                     
                     # Afficher l'image avec le code détecté
                     st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
@@ -582,7 +578,6 @@ if st.session_state.page == "saisie":
                     # Mettre à jour le libellé si le code existe dans la base
                     if code_trouve in ARTICLES_PREDEFINIS:
                         st.session_state.libelle_value = ARTICLES_PREDEFINIS[code_trouve]
-                        st.session_state.dernier_code = code_trouve
                     
                     # Vérifier si le code existe dans les articles prédéfinis
                     libelle_trouve = rechercher_article_par_code(code_trouve)
@@ -612,7 +607,6 @@ if st.session_state.page == "saisie":
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
             st.session_state.libelle_value = ""
-            st.session_state.dernier_code = ""
             st.rerun()
     
     st.markdown("---")
@@ -620,11 +614,20 @@ if st.session_state.page == "saisie":
     # Formulaire de création d'article avec libellé et emplacement optionnels
     st.markdown("### 📝 Informations de l'article")
     
-    # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
-    input_key = f"code_article_input_{st.session_state.code_detecte or 'manuel'}"
+    # Callback pour mettre à jour le libellé quand le code change
+    def on_code_change():
+        code = st.session_state.code_article_input
+        if code in ARTICLES_PREDEFINIS:
+            st.session_state.libelle_value = ARTICLES_PREDEFINIS[code]
+        else:
+            st.session_state.libelle_value = ""
     
-    # Définir la valeur par défaut en fonction du code détecté
-    default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
+    # Initialiser la valeur du code avec le code détecté
+    if st.session_state.code_detecte and 'code_article_input' not in st.session_state:
+        st.session_state.code_article_input = st.session_state.code_detecte
+        # Mettre à jour le libellé si nécessaire
+        if st.session_state.code_detecte in ARTICLES_PREDEFINIS:
+            st.session_state.libelle_value = ARTICLES_PREDEFINIS[st.session_state.code_detecte]
     
     # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
@@ -632,31 +635,21 @@ if st.session_state.page == "saisie":
     with col_code:
         code_article = st.text_input(
             "Code article *",
-            value=default_value,
             placeholder="Code article (obligatoire)",
-            key=input_key
+            key="code_article_input",
+            on_change=on_code_change
         )
         
-        # Si un code article est entré et qu'il existe dans les articles prédéfinis
+        # Afficher le message si l'article est trouvé
         if code_article and code_article in ARTICLES_PREDEFINIS:
-            # Mettre à jour le libellé dans session_state
-            if st.session_state.dernier_code != code_article:
-                st.session_state.libelle_value = ARTICLES_PREDEFINIS[code_article]
-                st.session_state.dernier_code = code_article
-            
             st.markdown(f"""
             <div class="article-found">
                 <strong>📝 Article trouvé:</strong> {ARTICLES_PREDEFINIS[code_article]}
             </div>
             """, unsafe_allow_html=True)
-        else:
-            # Si le code n'existe pas dans la base, vider le libellé
-            if code_article and st.session_state.dernier_code != code_article:
-                st.session_state.libelle_value = ""
-                st.session_state.dernier_code = code_article
     
     with col_lib:
-        # Fonction de callback pour mettre à jour la valeur du libellé
+        # Callback pour mettre à jour la valeur en session quand l'utilisateur modifie le libellé
         def on_libelle_change():
             st.session_state.libelle_value = st.session_state.libelle_input
         
@@ -692,7 +685,9 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
                     st.session_state.libelle_value = ""
-                    st.session_state.dernier_code = ""
+                    # Nettoyer le champ code pour la prochaine fois
+                    if 'code_article_input' in st.session_state:
+                        del st.session_state.code_article_input
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -706,7 +701,8 @@ if st.session_state.page == "saisie":
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.session_state.libelle_value = ""
-            st.session_state.dernier_code = ""
+            if 'code_article_input' in st.session_state:
+                del st.session_state.code_article_input
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -748,7 +744,8 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.session_state.libelle_value = ""
-            st.session_state.dernier_code = ""
+            if 'code_article_input' in st.session_state:
+                del st.session_state.code_article_input
             st.rerun()
     with col_o2:
         if st.button("📸 Ajouter une photo", use_container_width=True):
