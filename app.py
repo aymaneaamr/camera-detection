@@ -531,9 +531,6 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    # Forcer le rechargement pour mettre à jour le champ code
-                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -563,9 +560,6 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    # Forcer le rechargement pour mettre à jour le champ code
-                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
