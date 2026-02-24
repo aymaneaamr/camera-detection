@@ -12,6 +12,31 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
 
+# ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
+ARTICLES_PREDEFINIS = {
+    "10751037": {
+        "libelle": "Capacitor E54.G85-203G30 Un 1260 V DC / 750 AC MKP 20µF",
+        "emplacement": "A191"
+    },
+    "10751038": {
+        "libelle": "Contacteur principal Bipolaire",
+        "emplacement": "A204"
+    },
+    "10751039": {
+        "libelle": "Contacteur de précharge Bipolaire",
+        "emplacement": "A204"
+    },
+    "10751040": {
+        "libelle": "Coupe circuit 1A, 480VAC, 3Poles",
+        "emplacement": "A192"
+    },
+    "10751050": {
+        "libelle": "Cosse à sertir 50x8",
+        "emplacement": "A194"
+    }
+}
+# =====================================================================================================
+
 # Configuration de la page
 st.set_page_config(
     page_title="Gestionnaire d'Inventaire Multi-Pièces",
@@ -70,6 +95,14 @@ st.markdown("""
         font-size: 0.8rem;
         margin-left: 0.5rem;
     }
+    .article-found {
+        background: #cce5ff;
+        color: #004085;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border-left: 5px solid #004085;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,6 +125,13 @@ class GestionnairePieces:
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
+            # Si le code existe dans les prédéfinis et que le libellé ou l'emplacement sont vides, on les remplit
+            if code_article in ARTICLES_PREDEFINIS:
+                if not libelle:
+                    libelle = ARTICLES_PREDEFINIS[code_article]["libelle"]
+                if not emplacement:
+                    emplacement = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+            
             self.articles[code_article] = {
                 'libelle': libelle,
                 'photos': [],
@@ -534,14 +574,11 @@ if st.session_state.page == "saisie":
     
     st.markdown("---")
     
-    # Formulaire de création d'article avec libellé et emplacement optionnels
+    # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU LIBELLÉ ET DE L'EMPLACEMENT ====================
     st.markdown("### 📝 Informations de l'article")
     
-    # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
-    input_key = f"code_article_input_{st.session_state.code_detecte or 'manuel'}"
-    
-    # Définir la valeur par défaut en fonction du code détecté
-    default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
+    # Valeur par défaut pour le code (depuis le scan)
+    default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
     # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
@@ -549,23 +586,41 @@ if st.session_state.page == "saisie":
     with col_code:
         code_article = st.text_input(
             "Code article *",
-            value=default_value,
+            value=default_code,
             placeholder="Code article (obligatoire)",
-            key=input_key
+            key="code_article"
         )
+        
+        # Déterminer le libellé et l'emplacement en fonction du code
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
+            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+            
+            # Afficher le message si l'article est trouvé
+            st.markdown(f"""
+            <div class="article-found">
+                <strong>📝 Article trouvé :</strong> {libelle_value}<br>
+                <strong>📍 Emplacement :</strong> {emplacement_value}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            libelle_value = ""
+            emplacement_value = ""
     
     with col_lib:
         libelle = st.text_input(
             "Libellé (optionnel)",
+            value=libelle_value,
             placeholder="Description de l'article",
-            key="libelle_input"
+            key="libelle"
         )
     
     with col_emp:
         emplacement = st.text_input(
             "Emplacement (optionnel)",
+            value=emplacement_value,
             placeholder="Ex: A-12, Rayon 3...",
-            key="emplacement_input"
+            key="emplacement"
         )
     
     st.caption("* Champ obligatoire")
@@ -586,7 +641,10 @@ if st.session_state.page == "saisie":
                     st.session_state.scan_effectue = False
                     st.rerun()
                 else:
-                    st.error("❌ Ce code article existe déjà")
+                    if code_article in gestionnaire.articles:
+                        st.error("❌ Ce code article existe déjà")
+                    else:
+                        st.error("❌ Erreur lors de la création de l'article")
             else:
                 st.error("❌ Veuillez entrer un code article")
     with col2:
