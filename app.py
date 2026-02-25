@@ -127,6 +127,20 @@ st.markdown("""
         border-left: 5px solid #ffc107 !important;
         background-color: #fff3cd !important;
     }
+    /* Style pour le bouton de copie */
+    .copy-button {
+        background-color: #ffc107;
+        color: #856404;
+        border: none;
+        border-radius: 5px;
+        padding: 5px 10px;
+        margin-left: 10px;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+    .copy-button:hover {
+        background-color: #e0a800;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -420,32 +434,6 @@ def detecter_code_barre_ameliore(image):
                                 'rect': rect
                             })
     
-    # 5. Si toujours aucun code, essayer avec détection de zones de code-barres
-    if not codes_detectes:
-        # Détection des zones avec gradient élevé (souvent caractéristique des codes-barres)
-        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
-        gradient_magnitude = np.uint8(gradient_magnitude / gradient_magnitude.max() * 255)
-        
-        # Seuillage pour isoler les zones à fort gradient
-        _, thresh = cv2.threshold(gradient_magnitude, 50, 255, cv2.THRESH_BINARY)
-        
-        # Opérations morphologiques
-        kernel = np.ones((5,5), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        
-        # Trouver les contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Dessiner les zones potentielles
-        for contour in contours:
-            if cv2.contourArea(contour) > 1000:
-                x, y, w, h = cv2.boundingRect(contour)
-                cv2.rectangle(resultat, (x, y), (x+w, y+h), (255, 0, 0), 2)
-                cv2.putText(resultat, "Zone code-barres possible", (x, y-10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-    
     return resultat, codes_detectes
 
 # Fonction pour détecter les pièces dans une image
@@ -519,8 +507,10 @@ if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
 if 'scan_timestamp' not in st.session_state:
     st.session_state.scan_timestamp = None
-if 'code_insere' not in st.session_state:
-    st.session_state.code_insere = False
+if 'code_manuel' not in st.session_state:
+    st.session_state.code_manuel = ""
+if 'force_update' not in st.session_state:
+    st.session_state.force_update = 0
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -578,7 +568,8 @@ with st.sidebar:
             st.session_state.article_selectionne = None
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.code_insere = False
+            st.session_state.code_manuel = ""
+            st.session_state.force_update += 1
             st.rerun()
         
         st.divider()
@@ -619,6 +610,8 @@ if st.session_state.page == "saisie":
     with col_scan1:
         scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
     
+    code_trouve_recent = None
+    
     if scan_option == "📸 Caméra":
         img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
         if img_barcode:
@@ -639,7 +632,8 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
                     st.session_state.scan_timestamp = time.time()
-                    st.session_state.code_insere = True  # Marquer que le code a été inséré
+                    st.session_state.code_manuel = code_trouve  # Mettre à jour la valeur manuelle
+                    code_trouve_recent = code_trouve
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -655,6 +649,10 @@ if st.session_state.page == "saisie":
                         <strong>✨ Saisie automatique :</strong> Le code a été automatiquement inséré dans le champ "Code article" ci-dessous.
                     </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Forcer une mise à jour
+                    st.session_state.force_update += 1
+                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté. Conseils :")
                     st.info("""
@@ -683,7 +681,8 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
                     st.session_state.scan_timestamp = time.time()
-                    st.session_state.code_insere = True  # Marquer que le code a été inséré
+                    st.session_state.code_manuel = code_trouve  # Mettre à jour la valeur manuelle
+                    code_trouve_recent = code_trouve
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -699,6 +698,10 @@ if st.session_state.page == "saisie":
                         <strong>✨ Saisie automatique :</strong> Le code a été automatiquement inséré dans le champ "Code article" ci-dessous.
                     </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Forcer une mise à jour
+                    st.session_state.force_update += 1
+                    st.rerun()
                 else:
                     st.warning("❌ Aucun code-barres détecté dans l'image. Veuillez réessayer avec une image plus claire.")
     
@@ -710,7 +713,8 @@ if st.session_state.page == "saisie":
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
             st.session_state.scan_timestamp = None
-            st.session_state.code_insere = False
+            st.session_state.code_manuel = ""
+            st.session_state.force_update += 1
             st.rerun()
     
     st.markdown("---")
@@ -718,21 +722,28 @@ if st.session_state.page == "saisie":
     # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU CODE ====================
     st.markdown("### 📝 Informations de l'article")
     
-    # Utiliser un conteneur pour forcer la mise à jour
-    with st.container():
+    # Déterminer la valeur par défaut pour le code
+    if code_trouve_recent:
+        default_code_value = code_trouve_recent
+    elif st.session_state.code_manuel:
+        default_code_value = st.session_state.code_manuel
+    elif st.session_state.code_detecte:
+        default_code_value = st.session_state.code_detecte
+    else:
+        default_code_value = ""
+    
+    # Créer un formulaire avec une clé unique qui change à chaque scan
+    form_key = f"article_form_{st.session_state.force_update}"
+    
+    with st.form(key=form_key):
         # Trois colonnes pour le code, le libellé et l'emplacement
         col_code, col_lib, col_emp = st.columns([2, 2, 1])
         
         with col_code:
-            # Déterminer la valeur par défaut en fonction du scan
-            default_code = ""
-            if st.session_state.code_detecte and st.session_state.code_insere:
-                default_code = st.session_state.code_detecte
-            
             # Champ de saisie avec la valeur par défaut
             code_article = st.text_input(
                 "Code article *",
-                value=default_code,
+                value=default_code_value,
                 placeholder="Code article (obligatoire)",
                 key="code_article_input"
             )
@@ -771,21 +782,25 @@ if st.session_state.page == "saisie":
                 placeholder="Ex: A-12, Rayon 3...",
                 key="emplacement_input"
             )
-    
-    # Afficher le message si l'article est trouvé
-    if code_article and code_article in ARTICLES_PREDEFINIS:
-        st.markdown(f"""
-        <div class="article-found">
-            <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
-            <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.caption("* Champ obligatoire")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("✅ Créer l'article", use_container_width=True):
+        
+        # Afficher le message si l'article est trouvé
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            st.markdown(f"""
+            <div class="article-found">
+                <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
+                <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.caption("* Champ obligatoire")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            submit_button = st.form_submit_button("✅ Créer l'article", use_container_width=True)
+        with col2:
+            cancel_button = st.form_submit_button("❌ Annuler", use_container_width=True)
+        
+        if submit_button:
             if code_article:
                 if gestionnaire.creer_nouvel_article(code_article, libelle, emplacement):
                     st.success(f"✅ Article '{code_article}' créé avec succès!")
@@ -798,7 +813,8 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
                     st.session_state.scan_timestamp = None
-                    st.session_state.code_insere = False
+                    st.session_state.code_manuel = ""
+                    st.session_state.force_update += 1
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -807,12 +823,13 @@ if st.session_state.page == "saisie":
                         st.error("❌ Erreur lors de la création de l'article")
             else:
                 st.error("❌ Veuillez entrer un code article")
-    with col2:
-        if st.button("❌ Annuler", use_container_width=True):
+        
+        if cancel_button:
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.session_state.scan_timestamp = None
-            st.session_state.code_insere = False
+            st.session_state.code_manuel = ""
+            st.session_state.force_update += 1
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -1008,7 +1025,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v3.1 - Avec scan code-barres amélioré")
+    st.caption("📦 Gestionnaire d'Inventaire v3.2 - Avec scan code-barres amélioré")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
