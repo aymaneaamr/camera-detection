@@ -11,6 +11,7 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
+import matplotlib.pyplot as plt
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -102,6 +103,14 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
+    }
+    .debug-box {
+        background: #fff3cd;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 5px;
+        border-left: 5px solid #ffc107;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -302,22 +311,89 @@ class GestionnairePieces:
         """Réinitialise complètement l'inventaire"""
         self.articles = {}
 
-# Fonction pour détecter et lire les codes-barres
+# Fonction améliorée pour détecter et lire les codes-barres
 def detecter_code_barre(image):
-    """Détecte et lit les codes-barres dans une image"""
+    """Détecte et lit les codes-barres dans une image avec prétraitement amélioré"""
     resultat = image.copy()
     codes_detectes = []
     
-    # Conversion en niveaux de gris
+    # Convertir en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Décoder les codes-barres
-    codes = decode(gray)
+    # Essayer plusieurs méthodes de prétraitement
     
-    for code in codes:
+    # 1. Image originale en niveaux de gris
+    codes = decode(gray)
+    if codes:
+        codes_detectes.extend(codes)
+        st.info("✅ Code détecté avec l'image originale")
+    
+    # 2. Amélioration du contraste (si pas de code détecté)
+    if not codes_detectes:
+        # CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
+        codes = decode(enhanced)
+        if codes:
+            codes_detectes.extend(codes)
+            st.info("✅ Code détecté après amélioration du contraste (CLAHE)")
+    
+    # 3. Seuillage adaptatif (si pas de code détecté)
+    if not codes_detectes:
+        # Seuillage adaptatif pour mieux faire ressortir les codes-barres
+        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                      cv2.THRESH_BINARY, 11, 2)
+        codes = decode(binary)
+        if codes:
+            codes_detectes.extend(codes)
+            st.info("✅ Code détecté après seuillage adaptatif")
+    
+    # 4. Redimensionnement de l'image (si pas de code détecté)
+    if not codes_detectes:
+        # Essayer de redimensionner l'image (parfois les codes sont trop petits)
+        for scale in [1.5, 2.0, 3.0]:
+            width = int(gray.shape[1] * scale)
+            height = int(gray.shape[0] * scale)
+            dim = (width, height)
+            resized = cv2.resize(gray, dim, interpolation=cv2.INTER_CUBIC)
+            codes = decode(resized)
+            if codes:
+                # Ajuster les coordonnées
+                for code in codes:
+                    code.rect = (int(code.rect[0]/scale), int(code.rect[1]/scale),
+                                int(code.rect[2]/scale), int(code.rect[3]/scale))
+                codes_detectes.extend(codes)
+                st.info(f"✅ Code détecté après redimensionnement x{scale}")
+                break
+    
+    # 5. Filtre passe-haut pour renforcer les contours (si pas de code détecté)
+    if not codes_detectes:
+        kernel = np.array([[-1,-1,-1],
+                          [-1, 9,-1],
+                          [-1,-1,-1]])
+        sharpened = cv2.filter2D(gray, -1, kernel)
+        codes = decode(sharpened)
+        if codes:
+            codes_detectes.extend(codes)
+            st.info("✅ Code détecté après renforcement des contours")
+    
+    # 6. Égalisation d'histogramme (si pas de code détecté)
+    if not codes_detectes:
+        equalized = cv2.equalizeHist(gray)
+        codes = decode(equalized)
+        if codes:
+            codes_detectes.extend(codes)
+            st.info("✅ Code détecté après égalisation d'histogramme")
+    
+    # Traitement des codes détectés
+    codes_formates = []
+    for code in codes_detectes:
         # Extraire les données
         data = code.data.decode('utf-8')
         type_code = code.type
+        
+        # Nettoyer les données (enlever les caractères spéciaux si nécessaire)
+        data = re.sub(r'[^\x20-\x7E]', '', data)
         
         # Dessiner le rectangle autour du code
         points = code.polygon
@@ -325,18 +401,71 @@ def detecter_code_barre(image):
             pts = np.array([(p.x, p.y) for p in points], np.int32)
             pts = pts.reshape((-1, 1, 2))
             cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
+        else:
+            # Fallback au rectangle si pas de polygone
+            (x, y, w, h) = code.rect
+            cv2.rectangle(resultat, (x, y), (x + w, y + h), (0, 255, 0), 3)
         
         # Ajouter le texte
         cv2.putText(resultat, f"{type_code}: {data}", 
                    (code.rect.left, code.rect.top - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        codes_detectes.append({
+        codes_formates.append({
             'data': data,
             'type': type_code
         })
     
-    return resultat, codes_detectes
+    return resultat, codes_formates
+
+# Fonction pour analyser les problèmes de détection
+def debug_detection_code_barre(image):
+    """Affiche des informations de debug sur l'image"""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    st.markdown('<div class="debug-box">', unsafe_allow_html=True)
+    st.markdown("### 🔍 Analyse de l'image")
+    
+    col_d1, col_d2 = st.columns(2)
+    
+    with col_d1:
+        st.markdown("**📊 Informations techniques :**")
+        st.write(f"- Dimensions : {image.shape[1]} x {image.shape[0]} pixels")
+        st.write(f"- Ratio : {image.shape[1]/image.shape[0]:.2f}")
+        st.write(f"- Luminosité moyenne : {np.mean(gray):.1f}/255")
+        st.write(f"- Contraste (écart-type) : {np.std(gray):.1f}")
+        st.write(f"- Luminosité min : {np.min(gray)}")
+        st.write(f"- Luminosité max : {np.max(gray)}")
+    
+    with col_d2:
+        st.markdown("**💡 Conseils :**")
+        if np.mean(gray) < 50:
+            st.write("⚠️ Image trop sombre")
+        elif np.mean(gray) > 200:
+            st.write("⚠️ Image trop claire")
+        else:
+            st.write("✅ Luminosité correcte")
+        
+        if np.std(gray) < 30:
+            st.write("⚠️ Faible contraste")
+        else:
+            st.write("✅ Bon contraste")
+        
+        if image.shape[0] < 300 or image.shape[1] < 300:
+            st.write("⚠️ Image trop petite")
+        else:
+            st.write("✅ Taille correcte")
+    
+    # Afficher l'histogramme
+    st.markdown("**📈 Histogramme des niveaux de gris :**")
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.hist(gray.ravel(), bins=256, range=[0,256], color='blue', alpha=0.7)
+    ax.set_xlabel("Intensité")
+    ax.set_ylabel("Fréquence")
+    ax.grid(True, alpha=0.3)
+    st.pyplot(fig)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # Fonction pour détecter les pièces dans une image
 def detecter_pieces(image):
@@ -407,6 +536,8 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'mode_debug' not in st.session_state:
+    st.session_state.mode_debug = False
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -425,6 +556,9 @@ Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 # Barre latérale avec la liste des articles
 with st.sidebar:
     st.header("📋 Articles en inventaire")
+    
+    # Option debug dans la sidebar
+    st.session_state.mode_debug = st.checkbox("🔧 Mode debug", value=st.session_state.mode_debug)
     
     if gestionnaire.articles:
         # Afficher tous les articles avec leurs totaux, libellés et emplacements
@@ -504,35 +638,14 @@ if st.session_state.page == "saisie":
     with col_scan1:
         scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
     
+    frame = None  # Initialiser frame
+    
     if scan_option == "📸 Caméra":
         img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
         if img_barcode:
             with st.spinner("🔍 Analyse du code-barres..."):
                 bytes_data = img_barcode.getvalue()
                 frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
-                
-                if codes:
-                    # Prendre le premier code détecté
-                    code_trouve = codes[0]['data']
-                    st.session_state.code_detecte = code_trouve
-                    st.session_state.scan_effectue = True
-                    
-                    # Afficher l'image avec le code détecté
-                    st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                            caption="Code-barres détecté", use_container_width=True)
-                    
-                    st.markdown(f"""
-                    <div class="success-box">
-                        <h4>✅ Code-barres détecté !</h4>
-                        <div class="code-display">{code_trouve}</div>
-                        <p><strong>Type :</strong> {codes[0]['type']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
     else:  # Upload
         uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
@@ -540,28 +653,52 @@ if st.session_state.page == "saisie":
             with st.spinner("🔍 Analyse du code-barres..."):
                 file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
                 frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
-                
-                # Afficher l'image
-                st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                        caption="Image analysée", use_container_width=True)
-                
-                if codes:
-                    code_trouve = codes[0]['data']
-                    st.session_state.code_detecte = code_trouve
-                    st.session_state.scan_effectue = True
-                    
-                    st.markdown(f"""
-                    <div class="success-box">
-                        <h4>✅ Code-barres détecté !</h4>
-                        <div class="code-display">{code_trouve}</div>
-                        <p><strong>Type :</strong> {codes[0]['type']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+    
+    # Si une image a été capturée ou uploadée
+    if frame is not None:
+        # Mode debug si activé
+        if st.session_state.mode_debug:
+            debug_detection_code_barre(frame)
+        
+        # Détection du code-barres avec la fonction améliorée
+        image_annotee, codes = detecter_code_barre(frame)
+        
+        # Afficher l'image analysée
+        col_img1, col_img2 = st.columns(2)
+        with col_img1:
+            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                    caption="Image originale", use_container_width=True)
+        with col_img2:
+            st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                    caption="Image analysée", use_container_width=True)
+        
+        if codes:
+            code_trouve = codes[0]['data']
+            st.session_state.code_detecte = code_trouve
+            st.session_state.scan_effectue = True
+            
+            st.markdown(f"""
+            <div class="success-box">
+                <h4>✅ Code-barres détecté !</h4>
+                <div class="code-display">{code_trouve}</div>
+                <p><strong>Type :</strong> {codes[0]['type']}</p>
+                <p><strong>Méthode utilisée :</strong> Détection multi-techniques</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Si plusieurs codes détectés
+            if len(codes) > 1:
+                st.info(f"ℹ️ {len(codes)} codes-barres détectés au total")
+        else:
+            st.warning("❌ Aucun code-barres détecté après plusieurs tentatives.")
+            st.markdown("""
+            **💡 Conseils pour améliorer la détection :**
+            - Assurez-vous que le code-barres est bien éclairé
+            - Tenez l'appareil stable pour éviter le flou
+            - Rapprochez-vous du code-barres
+            - Vérifiez que le code-barres n'est pas endommagé
+            - Essayez avec un meilleur contraste
+            """)
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -851,7 +988,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres amélioré")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
