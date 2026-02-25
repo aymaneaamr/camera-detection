@@ -122,6 +122,11 @@ st.markdown("""
         font-size: 1.2rem !important;
         font-weight: bold !important;
     }
+    /* Style pour le champ rempli automatiquement */
+    .auto-filled-input {
+        border-left: 5px solid #ffc107 !important;
+        background-color: #fff3cd !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -499,14 +504,6 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
-# Fonction pour mettre à jour le code article automatiquement
-def update_code_article():
-    """Met à jour le code article dans session_state quand un code est détecté"""
-    if st.session_state.get('code_detecte') and st.session_state.get('code_detecte') != st.session_state.get('code_article_input', ''):
-        st.session_state.code_article_input = st.session_state.code_detecte
-        return True
-    return False
-
 # Initialisation
 if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
@@ -522,6 +519,8 @@ if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
 if 'scan_timestamp' not in st.session_state:
     st.session_state.scan_timestamp = None
+if 'code_insere' not in st.session_state:
+    st.session_state.code_insere = False
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -579,6 +578,7 @@ with st.sidebar:
             st.session_state.article_selectionne = None
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
+            st.session_state.code_insere = False
             st.rerun()
         
         st.divider()
@@ -639,6 +639,7 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
                     st.session_state.scan_timestamp = time.time()
+                    st.session_state.code_insere = True  # Marquer que le code a été inséré
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -682,6 +683,7 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
                     st.session_state.scan_timestamp = time.time()
+                    st.session_state.code_insere = True  # Marquer que le code a été inséré
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -708,6 +710,7 @@ if st.session_state.page == "saisie":
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
             st.session_state.scan_timestamp = None
+            st.session_state.code_insere = False
             st.rerun()
     
     st.markdown("---")
@@ -715,59 +718,59 @@ if st.session_state.page == "saisie":
     # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU CODE ====================
     st.markdown("### 📝 Informations de l'article")
     
-    # Valeur par défaut pour le code (depuis le scan)
-    default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
-    
-    # Utiliser un callback pour détecter les changements
-    def on_code_change():
-        if st.session_state.code_article_input != st.session_state.get('previous_code', ''):
-            st.session_state.previous_code = st.session_state.code_article_input
-    
-    # Trois colonnes pour le code, le libellé et l'emplacement
-    col_code, col_lib, col_emp = st.columns([2, 2, 1])
-    
-    with col_code:
-        # Champ de saisie avec valeur dynamique
-        code_article = st.text_input(
-            "Code article *",
-            value=default_code,
-            placeholder="Code article (obligatoire)",
-            key="code_article_input",
-            on_change=on_code_change
-        )
+    # Utiliser un conteneur pour forcer la mise à jour
+    with st.container():
+        # Trois colonnes pour le code, le libellé et l'emplacement
+        col_code, col_lib, col_emp = st.columns([2, 2, 1])
         
-        # Afficher un indicateur si le code a été détecté automatiquement
-        if st.session_state.scan_effectue and st.session_state.code_detecte:
-            if code_article == st.session_state.code_detecte:
-                st.caption("✅ Code inséré automatiquement")
-    
-    with col_lib:
-        # Déterminer le libellé en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
-        else:
-            libelle_value = ""
+        with col_code:
+            # Déterminer la valeur par défaut en fonction du scan
+            default_code = ""
+            if st.session_state.code_detecte and st.session_state.code_insere:
+                default_code = st.session_state.code_detecte
+            
+            # Champ de saisie avec la valeur par défaut
+            code_article = st.text_input(
+                "Code article *",
+                value=default_code,
+                placeholder="Code article (obligatoire)",
+                key="code_article_input"
+            )
+            
+            # Afficher un indicateur si le code a été détecté automatiquement
+            if st.session_state.scan_effectue and st.session_state.code_detecte:
+                if code_article == st.session_state.code_detecte:
+                    st.success("✅ Code inséré automatiquement")
+                else:
+                    st.info("✏️ Vous pouvez modifier le code si nécessaire")
         
-        libelle = st.text_input(
-            "Libellé (optionnel)",
-            value=libelle_value,
-            placeholder="Description de l'article",
-            key="libelle_input"
-        )
-    
-    with col_emp:
-        # Déterminer l'emplacement en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
-        else:
-            emplacement_value = ""
+        with col_lib:
+            # Déterminer le libellé en fonction du code
+            if code_article and code_article in ARTICLES_PREDEFINIS:
+                libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
+            else:
+                libelle_value = ""
+            
+            libelle = st.text_input(
+                "Libellé (optionnel)",
+                value=libelle_value,
+                placeholder="Description de l'article",
+                key="libelle_input"
+            )
         
-        emplacement = st.text_input(
-            "Emplacement (optionnel)",
-            value=emplacement_value,
-            placeholder="Ex: A-12, Rayon 3...",
-            key="emplacement_input"
-        )
+        with col_emp:
+            # Déterminer l'emplacement en fonction du code
+            if code_article and code_article in ARTICLES_PREDEFINIS:
+                emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+            else:
+                emplacement_value = ""
+            
+            emplacement = st.text_input(
+                "Emplacement (optionnel)",
+                value=emplacement_value,
+                placeholder="Ex: A-12, Rayon 3...",
+                key="emplacement_input"
+            )
     
     # Afficher le message si l'article est trouvé
     if code_article and code_article in ARTICLES_PREDEFINIS:
@@ -795,6 +798,7 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
                     st.session_state.scan_timestamp = None
+                    st.session_state.code_insere = False
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -808,6 +812,7 @@ if st.session_state.page == "saisie":
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
             st.session_state.scan_timestamp = None
+            st.session_state.code_insere = False
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
