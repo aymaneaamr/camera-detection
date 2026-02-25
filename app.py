@@ -11,6 +11,7 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
+import time
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -102,6 +103,24 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
+    }
+    .auto-filled {
+        background: #fff3cd;
+        color: #856404;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border-left: 5px solid #ffc107;
+        margin: 0.5rem 0;
+        animation: pulse 1s;
+    }
+    @keyframes pulse {
+        0% { opacity: 0.6; }
+        50% { opacity: 1; }
+        100% { opacity: 0.6; }
+    }
+    .stTextInput input {
+        font-size: 1.2rem !important;
+        font-weight: bold !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -302,39 +321,125 @@ class GestionnairePieces:
         """Réinitialise complètement l'inventaire"""
         self.articles = {}
 
-# Fonction pour détecter et lire les codes-barres
-def detecter_code_barre(image):
-    """Détecte et lit les codes-barres dans une image"""
+# Fonction améliorée pour détecter et lire les codes-barres
+def detecter_code_barre_ameliore(image):
+    """Détection améliorée des codes-barres avec prétraitement"""
     resultat = image.copy()
     codes_detectes = []
     
-    # Conversion en niveaux de gris
+    # 1. Conversion en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Décoder les codes-barres
-    codes = decode(gray)
+    # 2. Amélioration du contraste (CLAHE)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    gray_enhanced = clahe.apply(gray)
     
-    for code in codes:
-        # Extraire les données
-        data = code.data.decode('utf-8')
-        type_code = code.type
+    # 3. Essayer plusieurs méthodes de prétraitement
+    images_a_tester = [
+        gray_enhanced,  # Image améliorée
+        gray,           # Image originale
+        cv2.adaptiveThreshold(gray_enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2),  # Binaire
+        cv2.equalizeHist(gray)  # Égalisation d'histogramme
+    ]
+    
+    for img in images_a_tester:
+        # Décoder les codes-barres
+        codes = decode(img)
         
-        # Dessiner le rectangle autour du code
-        points = code.polygon
-        if len(points) == 4:
-            pts = np.array([(p.x, p.y) for p in points], np.int32)
-            pts = pts.reshape((-1, 1, 2))
-            cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
+        for code in codes:
+            # Extraire les données
+            data = code.data.decode('utf-8')
+            type_code = code.type
+            
+            # Nettoyer les données (enlever les caractères spéciaux)
+            data = re.sub(r'[^\x20-\x7E]', '', data)  # Garder seulement les caractères imprimables ASCII
+            
+            # Vérifier si le code est valide (non vide et raisonnable)
+            if data and len(data) < 50 and not data.isspace():
+                # Éviter les doublons
+                if not any(c['data'] == data for c in codes_detectes):
+                    # Dessiner le rectangle autour du code
+                    points = code.polygon
+                    if len(points) == 4:
+                        pts = np.array([(p.x, p.y) for p in points], np.int32)
+                        pts = pts.reshape((-1, 1, 2))
+                        cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
+                    
+                    # Ajouter le texte
+                    cv2.putText(resultat, f"{type_code}: {data}", 
+                               (code.rect.left, code.rect.top - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    
+                    codes_detectes.append({
+                        'data': data,
+                        'type': type_code,
+                        'rect': code.rect
+                    })
+    
+    # 4. Si aucun code détecté, essayer avec redimensionnement
+    if not codes_detectes:
+        # Essayer différents redimensionnements
+        for scale in [0.5, 1.0, 1.5, 2.0]:
+            if scale != 1.0:
+                new_width = int(gray.shape[1] * scale)
+                new_height = int(gray.shape[0] * scale)
+                resized = cv2.resize(gray, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+                codes = decode(resized)
+                
+                for code in codes:
+                    data = code.data.decode('utf-8')
+                    data = re.sub(r'[^\x20-\x7E]', '', data)
+                    type_code = code.type
+                    
+                    if data and len(data) < 50 and not data.isspace():
+                        if not any(c['data'] == data for c in codes_detectes):
+                            # Ajuster les coordonnées pour le redimensionnement
+                            rect = code.rect
+                            rect.left = int(rect.left / scale)
+                            rect.top = int(rect.top / scale)
+                            rect.width = int(rect.width / scale)
+                            rect.height = int(rect.height / scale)
+                            
+                            cv2.rectangle(resultat, 
+                                        (rect.left, rect.top), 
+                                        (rect.left + rect.width, rect.top + rect.height), 
+                                        (0, 255, 0), 3)
+                            
+                            cv2.putText(resultat, f"{type_code}: {data}", 
+                                       (rect.left, rect.top - 10),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                            
+                            codes_detectes.append({
+                                'data': data,
+                                'type': type_code,
+                                'rect': rect
+                            })
+    
+    # 5. Si toujours aucun code, essayer avec détection de zones de code-barres
+    if not codes_detectes:
+        # Détection des zones avec gradient élevé (souvent caractéristique des codes-barres)
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
+        gradient_magnitude = np.uint8(gradient_magnitude / gradient_magnitude.max() * 255)
         
-        # Ajouter le texte
-        cv2.putText(resultat, f"{type_code}: {data}", 
-                   (code.rect.left, code.rect.top - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        # Seuillage pour isoler les zones à fort gradient
+        _, thresh = cv2.threshold(gradient_magnitude, 50, 255, cv2.THRESH_BINARY)
         
-        codes_detectes.append({
-            'data': data,
-            'type': type_code
-        })
+        # Opérations morphologiques
+        kernel = np.ones((5,5), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        
+        # Trouver les contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Dessiner les zones potentielles
+        for contour in contours:
+            if cv2.contourArea(contour) > 1000:
+                x, y, w, h = cv2.boundingRect(contour)
+                cv2.rectangle(resultat, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                cv2.putText(resultat, "Zone code-barres possible", (x, y-10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
     
     return resultat, codes_detectes
 
@@ -394,6 +499,14 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
+# Fonction pour mettre à jour le code article automatiquement
+def update_code_article():
+    """Met à jour le code article dans session_state quand un code est détecté"""
+    if st.session_state.get('code_detecte') and st.session_state.get('code_detecte') != st.session_state.get('code_article_input', ''):
+        st.session_state.code_article_input = st.session_state.code_detecte
+        return True
+    return False
+
 # Initialisation
 if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
@@ -407,6 +520,8 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'scan_timestamp' not in st.session_state:
+    st.session_state.scan_timestamp = None
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -511,18 +626,19 @@ if st.session_state.page == "saisie":
                 bytes_data = img_barcode.getvalue()
                 frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
+                # Détection améliorée du code-barres
+                image_annotee, codes = detecter_code_barre_ameliore(frame)
+                
+                # Afficher l'image avec les codes détectés
+                st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                        caption="Image analysée", use_container_width=True)
                 
                 if codes:
                     # Prendre le premier code détecté
                     code_trouve = codes[0]['data']
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
-                    
-                    # Afficher l'image avec le code détecté
-                    st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                            caption="Code-barres détecté", use_container_width=True)
+                    st.session_state.scan_timestamp = time.time()
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -531,8 +647,21 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Notification de saisie automatique
+                    st.markdown("""
+                    <div class="auto-filled">
+                        <strong>✨ Saisie automatique :</strong> Le code a été automatiquement inséré dans le champ "Code article" ci-dessous.
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+                    st.warning("❌ Aucun code-barres détecté. Conseils :")
+                    st.info("""
+                    - Assurez-vous que le code-barres est bien éclairé
+                    - Tenez l'appareil stable
+                    - Rapprochez-vous du code-barres
+                    - Évitez les reflets
+                    """)
     
     else:  # Upload
         uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
@@ -541,8 +670,8 @@ if st.session_state.page == "saisie":
                 file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
                 frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                 
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
+                # Détection améliorée du code-barres
+                image_annotee, codes = detecter_code_barre_ameliore(frame)
                 
                 # Afficher l'image
                 st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
@@ -552,6 +681,7 @@ if st.session_state.page == "saisie":
                     code_trouve = codes[0]['data']
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
+                    st.session_state.scan_timestamp = time.time()
                     
                     st.markdown(f"""
                     <div class="success-box">
@@ -560,8 +690,15 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Notification de saisie automatique
+                    st.markdown("""
+                    <div class="auto-filled">
+                        <strong>✨ Saisie automatique :</strong> Le code a été automatiquement inséré dans le champ "Code article" ci-dessous.
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+                    st.warning("❌ Aucun code-barres détecté dans l'image. Veuillez réessayer avec une image plus claire.")
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -570,26 +707,39 @@ if st.session_state.page == "saisie":
         if st.button("🔄 Nouveau scan", use_container_width=True):
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
+            st.session_state.scan_timestamp = None
             st.rerun()
     
     st.markdown("---")
     
-    # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU LIBELLÉ ET DE L'EMPLACEMENT ====================
+    # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU CODE ====================
     st.markdown("### 📝 Informations de l'article")
     
     # Valeur par défaut pour le code (depuis le scan)
     default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
+    # Utiliser un callback pour détecter les changements
+    def on_code_change():
+        if st.session_state.code_article_input != st.session_state.get('previous_code', ''):
+            st.session_state.previous_code = st.session_state.code_article_input
+    
     # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_code:
+        # Champ de saisie avec valeur dynamique
         code_article = st.text_input(
             "Code article *",
             value=default_code,
             placeholder="Code article (obligatoire)",
-            key="code_article_input"
+            key="code_article_input",
+            on_change=on_code_change
         )
+        
+        # Afficher un indicateur si le code a été détecté automatiquement
+        if st.session_state.scan_effectue and st.session_state.code_detecte:
+            if code_article == st.session_state.code_detecte:
+                st.caption("✅ Code inséré automatiquement")
     
     with col_lib:
         # Déterminer le libellé en fonction du code
@@ -619,7 +769,7 @@ if st.session_state.page == "saisie":
             key="emplacement_input"
         )
     
-    # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
+    # Afficher le message si l'article est trouvé
     if code_article and code_article in ARTICLES_PREDEFINIS:
         st.markdown(f"""
         <div class="article-found">
@@ -644,6 +794,7 @@ if st.session_state.page == "saisie":
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
+                    st.session_state.scan_timestamp = None
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -656,6 +807,7 @@ if st.session_state.page == "saisie":
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
+            st.session_state.scan_timestamp = None
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -851,7 +1003,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v3.1 - Avec scan code-barres amélioré")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
