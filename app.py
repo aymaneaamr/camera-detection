@@ -12,22 +12,37 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
 
+# ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
+ARTICLES_PREDEFINIS = {
+    "10751037": {
+        "libelle": "Capacitor E54.G85-203G30 Un 1260 V DC / 750 AC MKP 20µF",
+        "emplacement": "A191"
+    },
+    "10751038": {
+        "libelle": "Contacteur principal Bipolaire",
+        "emplacement": "A204"
+    },
+    "10751039": {
+        "libelle": "Contacteur de précharge Bipolaire",
+        "emplacement": "A204"
+    },
+    "10751040": {
+        "libelle": "Coupe circuit 1A, 480VAC, 3Poles",
+        "emplacement": "A192"
+    },
+    "10751050": {
+        "libelle": "Cosse à sertir 50x8",
+        "emplacement": "A194"
+    }
+}
+# =====================================================================================================
+
 # Configuration de la page
 st.set_page_config(
     page_title="Gestionnaire d'Inventaire Multi-Pièces",
     page_icon="📦",
     layout="wide"
 )
-
-# Dictionnaire de référence pour les codes articles avec leurs libellés et emplacements
-REFERENCE_ARTICLES = {
-    "10751036": {"libelle": "Capacitor E54.G62-103G10 Un 1260 V DC / 750 AC MKP 10µF", "emplacement": "A192"},
-    "10751037": {"libelle": "Capacitor E54.G85-203G30 Un 1260 V DC / 750 AC MKP 20µF", "emplacement": "A191"},
-    "10751038": {"libelle": "Contacteur principal Bipolaire", "emplacement": "A204"},
-    "10751039": {"libelle": "Contacteur de précharge Bipolaire", "emplacement": "A204"},
-    "10751040": {"libelle": "Coupe circuit 1A, 480VAC, 3Poles", "emplacement": "A192"},
-    "10751050": {"libelle": "Cosse à sertir 50x8", "emplacement": "A194"}
-}
 
 # CSS personnalisé
 st.markdown("""
@@ -80,14 +95,13 @@ st.markdown("""
         font-size: 0.8rem;
         margin-left: 0.5rem;
     }
-    .info-box {
-        background: #fff3cd;
-        color: #856404;
-        padding: 0.5rem 1rem;
+    .article-found {
+        background: #cce5ff;
+        color: #004085;
+        padding: 0.5rem;
         border-radius: 5px;
-        border-left: 5px solid #ffc107;
+        border-left: 5px solid #004085;
         margin: 0.5rem 0;
-        font-size: 0.9rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -111,6 +125,13 @@ class GestionnairePieces:
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
+            # Si le code existe dans les prédéfinis et que le libellé ou l'emplacement sont vides, on les remplit
+            if code_article in ARTICLES_PREDEFINIS:
+                if not libelle:
+                    libelle = ARTICLES_PREDEFINIS[code_article]["libelle"]
+                if not emplacement:
+                    emplacement = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+            
             self.articles[code_article] = {
                 'libelle': libelle,
                 'photos': [],
@@ -233,7 +254,7 @@ class GestionnairePieces:
         
         # Ajuster la largeur des colonnes
         sheet_resume.column_dimensions['A'].width = 20
-        sheet_resume.column_dimensions['B'].width = 50  # Augmenté pour les libellés longs
+        sheet_resume.column_dimensions['B'].width = 30
         sheet_resume.column_dimensions['C'].width = 20
         sheet_resume.column_dimensions['D'].width = 15
         sheet_resume.column_dimensions['E'].width = 15
@@ -267,7 +288,7 @@ class GestionnairePieces:
         
         # Ajuster les colonnes du détail
         sheet_detail.column_dimensions['A'].width = 20
-        sheet_detail.column_dimensions['B'].width = 50  # Augmenté pour les libellés longs
+        sheet_detail.column_dimensions['B'].width = 30
         sheet_detail.column_dimensions['C'].width = 20
         sheet_detail.column_dimensions['D'].width = 12
         sheet_detail.column_dimensions['E'].width = 22
@@ -280,13 +301,6 @@ class GestionnairePieces:
     def reinitialiser_tout(self):
         """Réinitialise complètement l'inventaire"""
         self.articles = {}
-
-# Fonction pour obtenir les infos d'un code article depuis la référence
-def get_infos_from_reference(code):
-    """Retourne le libellé et l'emplacement d'un code article depuis la base de référence"""
-    if code in REFERENCE_ARTICLES:
-        return REFERENCE_ARTICLES[code]
-    return None
 
 # Fonction pour détecter et lire les codes-barres
 def detecter_code_barre(image):
@@ -393,10 +407,6 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
-if 'libelle_auto' not in st.session_state:
-    st.session_state.libelle_auto = ""
-if 'emplacement_auto' not in st.session_state:
-    st.session_state.emplacement_auto = ""
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -405,26 +415,15 @@ st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Scanner** un code-barres pour identifier automatiquement l'article
-2. **Ajouter** un libellé descriptif (optionnel - s'ajoute automatiquement si le code est dans la base)
-3. **Ajouter** un emplacement de stockage (optionnel - s'ajoute automatiquement si le code est dans la base)
+2. **Ajouter** un libellé descriptif (optionnel)
+3. **Ajouter** un emplacement de stockage (optionnel)
 4. **Ajouter** plusieurs photos pour cet article
 5. **Changer** d'article et répéter
 6. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Afficher la base de référence dans la sidebar
+# Barre latérale avec la liste des articles
 with st.sidebar:
-    st.header("📚 Base de référence")
-    with st.expander("Voir les articles référencés"):
-        for code, infos in REFERENCE_ARTICLES.items():
-            st.markdown(f"""
-            **{code}**  
-            📝 {infos['libelle'][:50]}...  
-            📍 {infos['emplacement']}
-            """)
-    
-    st.divider()
-    
     st.header("📋 Articles en inventaire")
     
     if gestionnaire.articles:
@@ -448,7 +447,7 @@ with st.sidebar:
             if libelle or emplacement:
                 badge_text = ""
                 if libelle:
-                    badge_text += f"📝 {libelle[:30]}..." if len(libelle) > 30 else f"📝 {libelle}"
+                    badge_text += f"📝 {libelle}"
                 if libelle and emplacement:
                     badge_text += " | "
                 if emplacement:
@@ -521,15 +520,6 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
                     
-                    # Vérifier si le code existe dans la référence
-                    infos_reference = get_infos_from_reference(code_trouve)
-                    if infos_reference:
-                        st.session_state.libelle_auto = infos_reference['libelle']
-                        st.session_state.emplacement_auto = infos_reference['emplacement']
-                    else:
-                        st.session_state.libelle_auto = ""
-                        st.session_state.emplacement_auto = ""
-                    
                     # Afficher l'image avec le code détecté
                     st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
                             caption="Code-barres détecté", use_container_width=True)
@@ -541,15 +531,6 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    if infos_reference:
-                        st.markdown(f"""
-                        <div class="info-box">
-                            <strong>📝 Informations trouvées dans la base :</strong><br>
-                            Libellé : {infos_reference['libelle']}<br>
-                            Emplacement : {infos_reference['emplacement']}
-                        </div>
-                        """, unsafe_allow_html=True)
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -572,15 +553,6 @@ if st.session_state.page == "saisie":
                     st.session_state.code_detecte = code_trouve
                     st.session_state.scan_effectue = True
                     
-                    # Vérifier si le code existe dans la référence
-                    infos_reference = get_infos_from_reference(code_trouve)
-                    if infos_reference:
-                        st.session_state.libelle_auto = infos_reference['libelle']
-                        st.session_state.emplacement_auto = infos_reference['emplacement']
-                    else:
-                        st.session_state.libelle_auto = ""
-                        st.session_state.emplacement_auto = ""
-                    
                     st.markdown(f"""
                     <div class="success-box">
                         <h4>✅ Code-barres détecté !</h4>
@@ -588,15 +560,6 @@ if st.session_state.page == "saisie":
                         <p><strong>Type :</strong> {codes[0]['type']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    if infos_reference:
-                        st.markdown(f"""
-                        <div class="info-box">
-                            <strong>📝 Informations trouvées dans la base :</strong><br>
-                            Libellé : {infos_reference['libelle']}<br>
-                            Emplacement : {infos_reference['emplacement']}
-                        </div>
-                        """, unsafe_allow_html=True)
                 else:
                     st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
     
@@ -607,74 +570,65 @@ if st.session_state.page == "saisie":
         if st.button("🔄 Nouveau scan", use_container_width=True):
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
-            st.session_state.libelle_auto = ""
-            st.session_state.emplacement_auto = ""
             st.rerun()
     
     st.markdown("---")
     
-    # Formulaire de création d'article avec libellé et emplacement optionnels
+    # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU LIBELLÉ ET DE L'EMPLACEMENT ====================
     st.markdown("### 📝 Informations de l'article")
     
-    # Utiliser une clé dynamique pour le text_input qui change quand le code est détecté
-    input_key = f"code_article_input_{st.session_state.code_detecte or 'manuel'}"
-    
-    # Définir la valeur par défaut en fonction du code détecté
-    default_value = st.session_state.code_detecte if st.session_state.code_detecte else ""
+    # Valeur par défaut pour le code (depuis le scan)
+    default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
     # Trois colonnes pour le code, le libellé et l'emplacement
-    col_code, col_lib, col_emp = st.columns([2, 3, 1])
+    col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_code:
         code_article = st.text_input(
             "Code article *",
-            value=default_value,
+            value=default_code,
             placeholder="Code article (obligatoire)",
-            key=input_key
+            key="code_article_input"
         )
-        
-        # Si l'utilisateur tape manuellement un code, vérifier s'il existe dans la référence
-        if code_article and code_article != default_value:
-            infos_manuel = get_infos_from_reference(code_article)
-            if infos_manuel:
-                st.session_state.libelle_auto = infos_manuel['libelle']
-                st.session_state.emplacement_auto = infos_manuel['emplacement']
-                st.markdown(f"""
-                <div class="info-box">
-                    ✅ Code reconnu ! Libellé et emplacement ont été automatiquement renseignés.
-                </div>
-                """, unsafe_allow_html=True)
     
     with col_lib:
+        # Déterminer le libellé en fonction du code
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
+        else:
+            libelle_value = ""
+        
         libelle = st.text_input(
             "Libellé (optionnel)",
-            value=st.session_state.libelle_auto,
+            value=libelle_value,
             placeholder="Description de l'article",
             key="libelle_input"
         )
     
     with col_emp:
+        # Déterminer l'emplacement en fonction du code
+        if code_article and code_article in ARTICLES_PREDEFINIS:
+            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+        else:
+            emplacement_value = ""
+        
         emplacement = st.text_input(
             "Emplacement (optionnel)",
-            value=st.session_state.emplacement_auto,
-            placeholder="Ex: A-12",
+            value=emplacement_value,
+            placeholder="Ex: A-12, Rayon 3...",
             key="emplacement_input"
         )
     
-    st.caption("* Champ obligatoire")
-    
-    # Afficher un résumé si le code est dans la référence
-    if code_article and code_article in REFERENCE_ARTICLES:
+    # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
+    if code_article and code_article in ARTICLES_PREDEFINIS:
         st.markdown(f"""
-        <div style="background: #e8f4f8; padding: 1rem; border-radius: 5px; margin: 1rem 0;">
-            <h4 style="color: #0066cc; margin: 0;">📋 Article référencé</h4>
-            <p style="margin: 0.5rem 0 0 0;">
-                <strong>Code :</strong> {code_article}<br>
-                <strong>Libellé :</strong> {REFERENCE_ARTICLES[code_article]['libelle']}<br>
-                <strong>Emplacement :</strong> {REFERENCE_ARTICLES[code_article]['emplacement']}
-            </p>
+        <div class="article-found">
+            <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
+            <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
         </div>
         """, unsafe_allow_html=True)
+    
+    st.caption("* Champ obligatoire")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -690,19 +644,18 @@ if st.session_state.page == "saisie":
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
-                    st.session_state.libelle_auto = ""
-                    st.session_state.emplacement_auto = ""
                     st.rerun()
                 else:
-                    st.error("❌ Ce code article existe déjà")
+                    if code_article in gestionnaire.articles:
+                        st.error("❌ Ce code article existe déjà")
+                    else:
+                        st.error("❌ Erreur lors de la création de l'article")
             else:
                 st.error("❌ Veuillez entrer un code article")
     with col2:
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.libelle_auto = ""
-            st.session_state.emplacement_auto = ""
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -732,9 +685,9 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         if emplacement:
             st.metric("Emplacement", emplacement)
     
-    # Afficher un badge si le code est dans la référence
-    if code_article in REFERENCE_ARTICLES:
-        st.info(f"🔖 Article référencé - {REFERENCE_ARTICLES[code_article]['libelle']}")
+    # Afficher un badge si le code est un code-barres
+    if re.match(r'^[A-Z0-9-]+$', code_article):
+        st.info(f"🔖 Code produit: {code_article}")
     
     # Options
     col_o1, col_o2, col_o3 = st.columns(3)
@@ -898,7 +851,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.0 - Avec base de référence")
+    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
