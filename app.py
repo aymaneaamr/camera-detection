@@ -311,23 +311,22 @@ class GestionnairePieces:
         """Réinitialise complètement l'inventaire"""
         self.articles = {}
 
-# Fonction ultra-optimisée pour détecter les codes-barres (spécialement pour Code 39)
+# Fonction ultra-optimisée pour détecter les codes-barres (12 méthodes)
 def detecter_code_barre_ultra(image):
-    """Détection de codes-barres avec multiples techniques optimisées pour le Code 39"""
+    """Détection de codes-barres avec multiples techniques, y compris détection de lignes verticales"""
     resultat = image.copy()
     codes_detectes = []
     methodes_utilisees = []
     
-    # Convertir en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # 1. ESSAI DIRECT (image originale)
+    # 1. Original
     codes = decode(gray)
     if codes:
         codes_detectes.extend(codes)
         methodes_utilisees.append("originale")
     
-    # 2. AMÉLIORATION DU CONTRASTE (CLAHE)
+    # 2. CLAHE
     if not codes_detectes:
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         enhanced = clahe.apply(gray)
@@ -336,47 +335,53 @@ def detecter_code_barre_ultra(image):
             codes_detectes.extend(codes)
             methodes_utilisees.append("CLAHE")
     
-    # 3. BINARISATION SIMPLE (seuil global)
+    # 3. Binarisation Otsu
     if not codes_detectes:
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         codes = decode(binary)
         if codes:
             codes_detectes.extend(codes)
-            methodes_utilisees.append("binarisation Otsu")
+            methodes_utilisees.append("Otsu")
     
-    # 4. SEUILLAGE ADAPTATIF (excellent pour les codes-barres)
+    # 4. Seuillage adaptatif (multiples fenêtres)
     if not codes_detectes:
-        # Essayer différentes tailles de fenêtre pour le seuillage adaptatif
-        for block_size in [11, 15, 21, 31]:
-            binary_adapt = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        for block_size in [11, 15, 21, 31, 51]:
+            binary_adapt = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                                 cv2.THRESH_BINARY, block_size, 2)
             codes = decode(binary_adapt)
             if codes:
                 codes_detectes.extend(codes)
-                methodes_utilisees.append(f"seuillage adaptatif (taille {block_size})")
+                methodes_utilisees.append(f"adaptatif {block_size}")
                 break
     
-    # 5. FILTRE PASSE-HAUT (renforcement des contours)
+    # 5. Filtre Sobel (accentue les contours verticaux)
     if not codes_detectes:
-        kernel_sharpen = np.array([[-1,-1,-1],
-                                  [-1, 9,-1],
-                                  [-1,-1,-1]])
-        sharpened = cv2.filter2D(gray, -1, kernel_sharpen)
-        codes = decode(sharpened)
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobelx = np.uint8(np.absolute(sobelx))
+        _, sobel_binary = cv2.threshold(sobelx, 50, 255, cv2.THRESH_BINARY)
+        codes = decode(sobel_binary)
         if codes:
             codes_detectes.extend(codes)
-            methodes_utilisees.append("renforcement contours")
+            methodes_utilisees.append("Sobel X")
     
-    # 6. MORPHOLOGIE MATHÉMATIQUE (pour nettoyer l'image)
+    # 6. Filtre de Canny (détection de contours)
     if not codes_detectes:
-        kernel = np.ones((1, 3), np.uint8)
+        edges = cv2.Canny(gray, 50, 150)
+        codes = decode(edges)
+        if codes:
+            codes_detectes.extend(codes)
+            methodes_utilisees.append("Canny")
+    
+    # 7. Morphologie (fermeture pour relier les barres)
+    if not codes_detectes:
+        kernel = np.ones((1, 5), np.uint8)
         morph = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
         codes = decode(morph)
         if codes:
             codes_detectes.extend(codes)
             methodes_utilisees.append("morphologie")
     
-    # 7. REDIMENSIONNEMENT (pour les petits codes-barres)
+    # 8. Redimensionnement
     if not codes_detectes:
         for scale in [1.5, 2.0, 2.5, 3.0]:
             width = int(gray.shape[1] * scale)
@@ -385,15 +390,14 @@ def detecter_code_barre_ultra(image):
             resized = cv2.resize(gray, dim, interpolation=cv2.INTER_CUBIC)
             codes = decode(resized)
             if codes:
-                # Ajuster les coordonnées
                 for code in codes:
                     code.rect = (int(code.rect[0]/scale), int(code.rect[1]/scale),
                                 int(code.rect[2]/scale), int(code.rect[3]/scale))
                 codes_detectes.extend(codes)
-                methodes_utilisees.append(f"redimensionnement x{scale}")
+                methodes_utilisees.append(f"redim x{scale}")
                 break
     
-    # 8. ROTATIONS (pour les codes-barres inclinés)
+    # 9. Rotation
     if not codes_detectes:
         for angle in [-15, -10, -5, 5, 10, 15]:
             center = (gray.shape[1]//2, gray.shape[0]//2)
@@ -401,68 +405,60 @@ def detecter_code_barre_ultra(image):
             rotated = cv2.warpAffine(gray, matrix, (gray.shape[1], gray.shape[0]))
             codes = decode(rotated)
             if codes:
-                # Corriger les coordonnées
-                for code in codes:
-                    # Transformation inverse approximative
-                    code.rect = (code.rect[0], code.rect[1], code.rect[2], code.rect[3])
                 codes_detectes.extend(codes)
                 methodes_utilisees.append(f"rotation {angle}°")
                 break
     
-    # 9. FILTRE DE SOBEL (détection des lignes verticales - caractéristique des codes-barres)
+    # 10. Filtre passe-haut (renforcement)
     if not codes_detectes:
-        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobelx = np.uint8(np.absolute(sobelx))
-        _, sobel_binary = cv2.threshold(sobelx, 50, 255, cv2.THRESH_BINARY)
-        codes = decode(sobel_binary)
+        kernel_sharpen = np.array([[-1,-1,-1],
+                                  [-1, 9,-1],
+                                  [-1,-1,-1]])
+        sharpened = cv2.filter2D(gray, -1, kernel_sharpen)
+        codes = decode(sharpened)
         if codes:
             codes_detectes.extend(codes)
-            methodes_utilisees.append("filtre Sobel")
+            methodes_utilisees.append("renforcement")
     
-    # 10. ÉGALISATION D'HISTOGRAMME
+    # 11. Égalisation d'histogramme
     if not codes_detectes:
         equalized = cv2.equalizeHist(gray)
         codes = decode(equalized)
         if codes:
             codes_detectes.extend(codes)
-            methodes_utilisees.append("égalisation histogramme")
+            methodes_utilisees.append("égalisation")
+    
+    # 12. Débrutage (Non-local Means Denoising)
+    if not codes_detectes:
+        denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+        codes = decode(denoised)
+        if codes:
+            codes_detectes.extend(codes)
+            methodes_utilisees.append("débrutage")
     
     # Traitement des codes détectés
     codes_formates = []
-    codes_uniques = set()  # Pour éviter les doublons
-    
+    codes_uniques = set()
     for code in codes_detectes:
         try:
-            data = code.data.decode('utf-8')
-            type_code = code.type
-            
-            # Nettoyer les données (enlever les caractères spéciaux)
-            data = re.sub(r'[^\x20-\x7E]', '', data)
-            
-            # Éviter les doublons
+            data = code.data.decode('utf-8').strip()
             if data in codes_uniques:
                 continue
             codes_uniques.add(data)
             
-            # Dessiner le rectangle autour du code
+            # Dessin
             points = code.polygon
             if len(points) == 4:
                 pts = np.array([(p.x, p.y) for p in points], np.int32)
-                pts = pts.reshape((-1, 1, 2))
-                cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
+                pts = pts.reshape((-1,1,2))
+                cv2.polylines(resultat, [pts], True, (0,255,0), 3)
             else:
-                (x, y, w, h) = code.rect
-                cv2.rectangle(resultat, (x, y), (x + w, y + h), (0, 255, 0), 3)
+                (x,y,w,h) = code.rect
+                cv2.rectangle(resultat, (x,y), (x+w,y+h), (0,255,0), 3)
+            cv2.putText(resultat, f"{code.type}: {data}", (code.rect.left, code.rect.top-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
             
-            # Ajouter le texte
-            cv2.putText(resultat, f"{type_code}: {data}", 
-                       (code.rect.left, code.rect.top - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            
-            codes_formates.append({
-                'data': data,
-                'type': type_code
-            })
+            codes_formates.append({'data': data, 'type': code.type})
         except:
             continue
     
@@ -768,19 +764,33 @@ if st.session_state.page == "saisie":
             </div>
             """, unsafe_allow_html=True)
             
-            # Si plusieurs codes détectés
+            # Si plusieurs codes distincts détectés
             if len(codes) > 1:
-                st.info(f"ℹ️ {len(codes)} codes-barres distincts détectés")
+                autres = ", ".join([c['data'] for c in codes[1:]])
+                st.info(f"ℹ️ Autres codes détectés : {autres}")
         else:
-            st.warning("❌ Aucun code-barres détecté après 10 techniques différentes.")
+            st.warning("❌ Aucun code-barres détecté après plusieurs tentatives.")
+            
+            # Proposition de saisie manuelle
+            with st.expander("✏️ Saisir le code manuellement", expanded=True):
+                col_m1, col_m2 = st.columns([3,1])
+                with col_m1:
+                    code_manuel = st.text_input("Entrez le code article", key="code_manuel")
+                with col_m2:
+                    if st.button("Utiliser ce code", use_container_width=True):
+                        if code_manuel:
+                            st.session_state.code_detecte = code_manuel
+                            st.session_state.scan_effectue = True
+                            st.rerun()
+                        else:
+                            st.error("Veuillez entrer un code")
+            
             st.markdown("""
-            **💡 Conseils pour améliorer la détection :**
+            **💡 Conseils :**
+            - Prenez une photo plus rapprochée du code-barres
             - Assurez-vous que le code-barres est bien éclairé
-            - Tenez l'appareil stable pour éviter le flou
-            - Rapprochez-vous du code-barres (il doit occuper une bonne partie de l'image)
-            - Vérifiez que le code-barres n'est pas endommagé
-            - Essayez avec un meilleur contraste (fond clair, code-barres foncé)
-            - Évitez les reflets sur le code-barres
+            - Évitez les reflets
+            - Si le code-barres est sur un écran, essayez d'augmenter la luminosité
             """)
     
     st.markdown('</div>', unsafe_allow_html=True)
