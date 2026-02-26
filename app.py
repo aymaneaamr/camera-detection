@@ -11,14 +11,19 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
-import os  # Ajouté pour la configuration de la webcam
+import os
+import time
 
 # ==================== CONFIGURATION SPÉCIFIQUE POUR WEBCAM LOGITECH C310 ====================
-# Forcer l'utilisation du backend DirectShow sur Windows (recommandé pour Logitech)
+# Forcer l'utilisation du backend DirectShow sur Windows (indispensable pour Logitech)
 if os.name == 'nt':  # Windows
+    # Désactiver complètement MSMF qui cause des problèmes avec Logitech
     os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
     os.environ['OPENCV_VIDEOIO_PRIORITY_DSHOW'] = '100'
     os.environ['OPENCV_VIDEOIO_DEBUG'] = '1'  # Pour voir les messages de débogage
+    
+    # Configuration supplémentaire pour Logitech
+    os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'videoio;HW_DEVICE_TYPE;0'
 # ============================================================================================
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
@@ -115,11 +120,21 @@ st.markdown("""
     .camera-info {
         background: #e3f2fd;
         color: #0d47a1;
-        padding: 0.5rem;
+        padding: 1rem;
         border-radius: 5px;
-        margin: 0.5rem 0;
-        font-size: 0.9rem;
+        margin: 1rem 0;
+        font-size: 1rem;
         text-align: center;
+        border: 2px solid #2196f3;
+    }
+    .camera-button {
+        background: #4CAF50;
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 5px;
+        text-align: center;
+        margin: 0.5rem 0;
+        cursor: pointer;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -412,6 +427,32 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
+# Fonction pour tester la webcam
+def tester_webcam():
+    """Teste si la webcam est accessible"""
+    try:
+        # Essayer d'abord avec DirectShow (meilleur pour Logitech)
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            # Laisser le temps à la caméra de s'initialiser
+            time.sleep(0.5)
+            ret, frame = cap.read()
+            cap.release()
+            if ret and frame is not None:
+                return True, "DirectShow"
+        
+        # Essayer avec l'API par défaut
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            time.sleep(0.5)
+            ret, frame = cap.read()
+            cap.release()
+            if ret and frame is not None:
+                return True, "Default"
+    except Exception as e:
+        return False, str(e)
+    return False, "Non détectée"
+
 # Initialisation
 if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
@@ -425,6 +466,11 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'camera_active' not in st.session_state:
+    st.session_state.camera_active = False
+
+# Tester la webcam au démarrage
+webcam_status, webcam_method = tester_webcam()
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -517,11 +563,19 @@ if st.session_state.page == "saisie":
     st.markdown("### 📷 Scanner le code-barres de l'article")
     st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
     
-    # Information sur la webcam
-    if os.name == 'nt':
-        st.markdown("""
+    # Afficher le statut de la webcam
+    if webcam_status:
+        st.markdown(f"""
         <div class="camera-info">
-            📷 Webcam Logitech C310 détectée - Cliquez sur le bouton ci-dessous pour prendre une photo
+            ✅ Webcam Logitech C310 détectée (via {webcam_method})<br>
+            <small>Cliquez sur le bouton ci-dessous pour prendre une photo</small>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="camera-info" style="background:#ffebee; color:#c62828; border-color:#f44336;">
+            ⚠️ Webcam non détectée<br>
+            <small>Vérifiez que la webcam est branchée et qu'aucune autre application ne l'utilise</small>
         </div>
         """, unsafe_allow_html=True)
     
@@ -531,34 +585,48 @@ if st.session_state.page == "saisie":
         scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
     
     if scan_option == "📸 Caméra":
-        img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
-        if img_barcode:
-            with st.spinner("🔍 Analyse du code-barres..."):
-                bytes_data = img_barcode.getvalue()
-                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
-                
-                if codes:
-                    # Prendre le premier code détecté
-                    code_trouve = codes[0]['data']
-                    st.session_state.code_detecte = code_trouve
-                    st.session_state.scan_effectue = True
+        # Bouton pour activer la caméra
+        if st.button("📷 Activer la webcam Logitech C310", key="activate_webcam", use_container_width=True):
+            st.session_state.camera_active = True
+            st.rerun()
+        
+        # Afficher la caméra seulement si activée
+        if st.session_state.camera_active:
+            st.info("ℹ️ La webcam est activée. Cliquez sur le bouton ci-dessous pour prendre la photo.")
+            
+            img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
+            if img_barcode:
+                with st.spinner("🔍 Analyse du code-barres..."):
+                    bytes_data = img_barcode.getvalue()
+                    frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                     
-                    # Afficher l'image avec le code détecté
-                    st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                            caption="Code-barres détecté", use_container_width=True)
+                    # Détection du code-barres
+                    image_annotee, codes = detecter_code_barre(frame)
                     
-                    st.markdown(f"""
-                    <div class="success-box">
-                        <h4>✅ Code-barres détecté !</h4>
-                        <div class="code-display">{code_trouve}</div>
-                        <p><strong>Type :</strong> {codes[0]['type']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+                    if codes:
+                        # Prendre le premier code détecté
+                        code_trouve = codes[0]['data']
+                        st.session_state.code_detecte = code_trouve
+                        st.session_state.scan_effectue = True
+                        
+                        # Afficher l'image avec le code détecté
+                        st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                                caption="Code-barres détecté", use_container_width=True)
+                        
+                        st.markdown(f"""
+                        <div class="success-box">
+                            <h4>✅ Code-barres détecté !</h4>
+                            <div class="code-display">{code_trouve}</div>
+                            <p><strong>Type :</strong> {codes[0]['type']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Désactiver la caméra après capture
+                        st.session_state.camera_active = False
+                    else:
+                        st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+        else:
+            st.info("👆 Cliquez sur 'Activer la webcam Logitech C310' pour commencer")
     
     else:  # Upload
         uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
@@ -596,6 +664,7 @@ if st.session_state.page == "saisie":
         if st.button("🔄 Nouveau scan", use_container_width=True):
             st.session_state.scan_effectue = False
             st.session_state.code_detecte = None
+            st.session_state.camera_active = False
             st.rerun()
     
     st.markdown("---")
@@ -670,6 +739,7 @@ if st.session_state.page == "saisie":
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
+                    st.session_state.camera_active = False
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -682,6 +752,7 @@ if st.session_state.page == "saisie":
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
+            st.session_state.camera_active = False
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -722,6 +793,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             st.session_state.page = "saisie"
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
+            st.session_state.camera_active = False
             st.rerun()
     with col_o2:
         if st.button("📸 Ajouter une photo", use_container_width=True):
@@ -739,11 +811,12 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
-        # Information sur la webcam
-        if os.name == 'nt':
-            st.markdown("""
+        # Afficher le statut de la webcam
+        if webcam_status:
+            st.markdown(f"""
             <div class="camera-info">
-                📷 Webcam Logitech C310 prête - Cliquez sur le bouton ci-dessous pour prendre une photo
+                ✅ Webcam Logitech C310 prête<br>
+                <small>Cliquez sur le bouton ci-dessous pour prendre une photo</small>
             </div>
             """, unsafe_allow_html=True)
         
@@ -757,17 +830,28 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
         
         if source == "📸 Prendre une photo":
-            img_file = st.camera_input("Prendre une photo", key="camera_photo")
-            if img_file:
-                with st.spinner("Analyse..."):
-                    bytes_data = img_file.getvalue()
-                    frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                    resultat, nb_pieces = detecter_pieces(frame)
-                    
-                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                        st.session_state.ajout_photo = False
-                        st.rerun()
+            # Bouton pour activer la caméra
+            if st.button("📷 Activer la webcam pour la photo", key="activate_photo_webcam", use_container_width=True):
+                st.session_state.photo_camera_active = True
+                st.rerun()
+            
+            if st.session_state.get('photo_camera_active', False):
+                st.info("ℹ️ La webcam est activée. Cliquez sur le bouton ci-dessous pour prendre la photo.")
+                
+                img_file = st.camera_input("Prendre une photo", key="camera_photo")
+                if img_file:
+                    with st.spinner("Analyse..."):
+                        bytes_data = img_file.getvalue()
+                        frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                        resultat, nb_pieces = detecter_pieces(frame)
+                        
+                        if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                            st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                            st.session_state.ajout_photo = False
+                            st.session_state.photo_camera_active = False
+                            st.rerun()
+            else:
+                st.info("👆 Cliquez sur 'Activer la webcam pour la photo' pour commencer")
         
         else:  # Choisir une image
             uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
