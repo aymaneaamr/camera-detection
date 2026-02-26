@@ -11,6 +11,9 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
+import time
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
+import av
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -103,9 +106,262 @@ st.markdown("""
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
     }
+    .webcam-container {
+        border: 3px solid #667eea;
+        border-radius: 10px;
+        padding: 10px;
+        margin: 10px 0;
+    }
+    .stats-box {
+        background: #f8f9fa;
+        padding: 10px;
+        border-radius: 5px;
+        border-left: 5px solid #28a745;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+# ==================== CLASSE POUR LE TRAITEMENT VIDÉO EN DIRECT ====================
+class VideoProcessor(VideoTransformerBase):
+    def __init__(self):
+        self.couleurs = {
+            'rouge': {
+                'lower1': np.array([0, 100, 100]), 'upper1': np.array([10, 255, 255]),
+                'lower2': np.array([160, 100, 100]), 'upper2': np.array([180, 255, 255]),
+                'couleur_bbox': (0, 0, 255)
+            },
+            'bleu': {
+                'lower': np.array([100, 150, 50]), 'upper': np.array([140, 255, 255]),
+                'couleur_bbox': (255, 0, 0)
+            },
+            'vert': {
+                'lower': np.array([40, 70, 70]), 'upper': np.array([80, 255, 255]),
+                'couleur_bbox': (0, 255, 0)
+            },
+            'jaune': {
+                'lower': np.array([20, 100, 100]), 'upper': np.array([30, 255, 255]),
+                'couleur_bbox': (0, 255, 255)
+            }
+        }
+        
+        self.seuils_taille = {
+            'P': (0, 500),
+            'M': (500, 2000),
+            'G': (2000, 5000),
+            'TG': (5000, float('inf'))
+        }
+        
+        self.frame_count = 0
+        self.stats_couleur = defaultdict(int)
+        self.stats_taille = defaultdict(int)
+        self.total_cumule = 0
+        
+    def get_couleur_piece(self, hsv, contour):
+        """Détermine la couleur d'une pièce"""
+        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+        cv2.drawContours(mask, [contour], -1, 255, -1)
+        
+        best_couleur = '?'
+        best_score = 0
+        best_color_bbox = (128, 128, 128)
+        
+        for nom_couleur, params in self.couleurs.items():
+            if 'lower1' in params:
+                mask1 = cv2.inRange(hsv, params['lower1'], params['upper1'])
+                mask2 = cv2.inRange(hsv, params['lower2'], params['upper2'])
+                mask_couleur = cv2.bitwise_or(mask1, mask2)
+            else:
+                mask_couleur = cv2.inRange(hsv, params['lower'], params['upper'])
+            
+            mask_combine = cv2.bitwise_and(mask_couleur, mask)
+            pixels_couleur = cv2.countNonZero(mask_combine)
+            pixels_total = cv2.countNonZero(mask)
+            
+            if pixels_total > 0:
+                score = pixels_couleur / pixels_total
+                if score > best_score and score > 0.2:
+                    best_score = score
+                    best_couleur = nom_couleur
+                    best_color_bbox = params['couleur_bbox']
+        
+        return best_couleur, best_color_bbox
+    
+    def get_taille_piece(self, aire):
+        """Détermine la taille d'une pièce"""
+        for nom_taille, (min_vol, max_vol) in self.seuils_taille.items():
+            if min_vol <= aire < max_vol:
+                return nom_taille
+        return '?'
+    
+    def detecter_pieces_live(self, frame):
+        """Détecte et compte les pièces dans une frame en direct"""
+        resultat = frame.copy()
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Détection des contours
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+        
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=2)
+        edges = cv2.erode(edges, kernel, iterations=1)
+        
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        pieces_valides = []
+        stats_couleur_actuelles = defaultdict(int)
+        stats_taille_actuelles = defaultdict(int)
+        
+        for contour in contours:
+            aire = cv2.contourArea(contour)
+            if aire < 200:
+                continue
+            
+            x, y, w, h = cv2.boundingRect(contour)
+            centre = (x + w//2, y + h//2)
+            
+            couleur_nom, couleur_bbox = self.get_couleur_piece(hsv, contour)
+            taille_nom = self.get_taille_piece(aire)
+            
+            pieces_valides.append(contour)
+            stats_couleur_actuelles[couleur_nom] += 1
+            stats_taille_actuelles[taille_nom] += 1
+            
+            # Dessiner la pièce
+            cv2.rectangle(resultat, (x, y), (x+w, y+h), couleur_bbox, 2)
+            cv2.circle(resultat, centre, 3, (255, 255, 255), -1)
+        
+        nb_pieces = len(pieces_valides)
+        self.frame_count += 1
+        
+        # Mise à jour des stats cumulées
+        for couleur, count in stats_couleur_actuelles.items():
+            self.stats_couleur[couleur] = count
+        
+        # Mettre à jour le total cumulé (optionnel)
+        if nb_pieces > self.total_cumule:
+            self.total_cumule = nb_pieces
+        
+        # Ajouter les informations sur l'image
+        h, w = resultat.shape[:2]
+        
+        # TOTAL ACTUEL
+        cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        # Statistiques en direct
+        y_stats = 60
+        cv2.putText(resultat, f"Couleurs: R:{stats_couleur_actuelles.get('rouge',0)} B:{stats_couleur_actuelles.get('bleu',0)} V:{stats_couleur_actuelles.get('vert',0)} J:{stats_couleur_actuelles.get('jaune',0)}", 
+                   (10, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        y_stats += 20
+        cv2.putText(resultat, f"Tailles: P:{stats_taille_actuelles.get('P',0)} M:{stats_taille_actuelles.get('M',0)} G:{stats_taille_actuelles.get('G',0)} TG:{stats_taille_actuelles.get('TG',0)}", 
+                   (10, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        return resultat, nb_pieces
+    
+    def recv(self, frame):
+        """Reçoit une frame de la webcam et la traite"""
+        img = frame.to_ndarray(format="bgr24")
+        
+        # Traitement de l'image
+        resultat, nb_pieces = self.detecter_pieces_live(img)
+        
+        return av.VideoFrame.from_ndarray(resultat, format="bgr24")
+
+# ==================== FONCTIONS EXISTANTES ====================
+def detecter_code_barre(image):
+    """Détecte et lit les codes-barres dans une image"""
+    resultat = image.copy()
+    codes_detectes = []
+    
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Décoder les codes-barres
+    codes = decode(gray)
+    
+    for code in codes:
+        # Extraire les données
+        data = code.data.decode('utf-8')
+        type_code = code.type
+        
+        # Dessiner le rectangle autour du code
+        points = code.polygon
+        if len(points) == 4:
+            pts = np.array([(p.x, p.y) for p in points], np.int32)
+            pts = pts.reshape((-1, 1, 2))
+            cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
+        
+        # Ajouter le texte
+        cv2.putText(resultat, f"{type_code}: {data}", 
+                   (code.rect.left, code.rect.top - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        codes_detectes.append({
+            'data': data,
+            'type': type_code
+        })
+    
+    return resultat, codes_detectes
+
+def detecter_pieces(image):
+    """Détecte et compte les pièces dans une image"""
+    resultat = image.copy()
+    
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Flou pour réduire le bruit
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Détection des contours
+    edges = cv2.Canny(blur, 50, 150)
+    
+    # Dilatation et érosion
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=2)
+    edges = cv2.erode(edges, kernel, iterations=1)
+    
+    # Trouver les contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Filtrer les petits contours (bruit)
+    pieces_valides = []
+    for contour in contours:
+        aire = cv2.contourArea(contour)
+        if aire > 200:  # Seuil minimum
+            pieces_valides.append(contour)
+    
+    nb_pieces = len(pieces_valides)
+    
+    # Dessiner les contours
+    for contour in pieces_valides:
+        # Dessiner le contour en vert
+        cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
+        
+        # Ajouter un point au centre
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
+    
+    # Ajouter le compteur
+    cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    
+    return resultat, nb_pieces
+
+def base64_to_image(base64_string):
+    img_data = base64.b64decode(base64_string)
+    nparr = np.frombuffer(img_data, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    return img
+
+# ==================== CLASSE GESTIONNAIRE (inchangée) ====================
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
@@ -302,99 +558,7 @@ class GestionnairePieces:
         """Réinitialise complètement l'inventaire"""
         self.articles = {}
 
-# Fonction pour détecter et lire les codes-barres
-def detecter_code_barre(image):
-    """Détecte et lit les codes-barres dans une image"""
-    resultat = image.copy()
-    codes_detectes = []
-    
-    # Conversion en niveaux de gris
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Décoder les codes-barres
-    codes = decode(gray)
-    
-    for code in codes:
-        # Extraire les données
-        data = code.data.decode('utf-8')
-        type_code = code.type
-        
-        # Dessiner le rectangle autour du code
-        points = code.polygon
-        if len(points) == 4:
-            pts = np.array([(p.x, p.y) for p in points], np.int32)
-            pts = pts.reshape((-1, 1, 2))
-            cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
-        
-        # Ajouter le texte
-        cv2.putText(resultat, f"{type_code}: {data}", 
-                   (code.rect.left, code.rect.top - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        codes_detectes.append({
-            'data': data,
-            'type': type_code
-        })
-    
-    return resultat, codes_detectes
-
-# Fonction pour détecter les pièces dans une image
-def detecter_pieces(image):
-    """Détecte et compte les pièces dans une image"""
-    resultat = image.copy()
-    
-    # Conversion en niveaux de gris
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Flou pour réduire le bruit
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Détection des contours
-    edges = cv2.Canny(blur, 50, 150)
-    
-    # Dilatation et érosion
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=2)
-    edges = cv2.erode(edges, kernel, iterations=1)
-    
-    # Trouver les contours
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Filtrer les petits contours (bruit)
-    pieces_valides = []
-    for contour in contours:
-        aire = cv2.contourArea(contour)
-        if aire > 200:  # Seuil minimum
-            pieces_valides.append(contour)
-    
-    nb_pieces = len(pieces_valides)
-    
-    # Dessiner les contours
-    for contour in pieces_valides:
-        # Dessiner le contour en vert
-        cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
-        
-        # Ajouter un point au centre
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
-    
-    # Ajouter le compteur
-    cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    
-    return resultat, nb_pieces
-
-# Fonction pour décoder l'image base64
-def base64_to_image(base64_string):
-    img_data = base64.b64decode(base64_string)
-    nparr = np.frombuffer(img_data, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    return img
-
-# Initialisation
+# ==================== INITIALISATION ====================
 if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
 if 'page' not in st.session_state:
@@ -407,19 +571,22 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'webcam_active' not in st.session_state:
+    st.session_state.webcam_active = False
 
 gestionnaire = st.session_state.gestionnaire
 
-# Interface principale
-st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
+# ==================== INTERFACE PRINCIPALE ====================
+st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Webcam")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Scanner** un code-barres pour identifier automatiquement l'article
 2. **Ajouter** un libellé descriptif (optionnel)
 3. **Ajouter** un emplacement de stockage (optionnel)
-4. **Ajouter** plusieurs photos pour cet article
-5. **Changer** d'article et répéter
-6. **Exporter** un fichier Excel avec tous les totaux
+4. **Utiliser la webcam** en direct pour compter les pièces
+5. **Ajouter** plusieurs photos pour cet article
+6. **Changer** d'article et répéter
+7. **Exporter** un fichier Excel avec tous les totaux
 """)
 
 # Barre latérale avec la liste des articles
@@ -493,6 +660,57 @@ with st.sidebar:
 if st.session_state.page == "saisie":
     # Page de saisie d'un nouvel article avec scan de code-barres
     st.header("➕ Ajouter un nouvel article")
+    
+    # Section webcam en direct (NOUVEAU)
+    st.markdown("### 📷 Webcam en direct")
+    st.markdown('<div class="webcam-container">', unsafe_allow_html=True)
+    
+    col_cam1, col_cam2 = st.columns([3, 1])
+    with col_cam1:
+        # Activer/Désactiver la webcam
+        webcam_active = st.checkbox("Activer la webcam", value=st.session_state.webcam_active)
+        
+        if webcam_active != st.session_state.webcam_active:
+            st.session_state.webcam_active = webcam_active
+            st.rerun()
+    
+    with col_cam2:
+        if st.session_state.webcam_active:
+            st.info("Webcam active - Comptage en direct")
+    
+    if st.session_state.webcam_active:
+        # Utiliser streamlit-webrtc pour la webcam
+        ctx = webrtc_streamer(
+            key="webcam-pieces",
+            mode=WebRtcMode.SENDRECV,
+            video_processor_factory=VideoProcessor,
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True,
+        )
+        
+        # Afficher les statistiques en direct
+        if ctx and ctx.video_processor:
+            processor = ctx.video_processor
+            st.markdown("""
+            <div class="stats-box">
+                <h4>📊 Statistiques en direct</h4>
+                <p>Comptage des pièces en temps réel avec détection des couleurs et tailles</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Afficher les dernières statistiques
+            col_stats1, col_stats2, col_stats3 = st.columns(3)
+            with col_stats1:
+                st.metric("Pièces détectées", processor.total_cumule)
+            with col_stats2:
+                st.metric("Rouge", processor.stats_couleur.get('rouge', 0))
+                st.metric("Bleu", processor.stats_couleur.get('bleu', 0))
+            with col_stats3:
+                st.metric("Vert", processor.stats_couleur.get('vert', 0))
+                st.metric("Jaune", processor.stats_couleur.get('jaune', 0))
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("---")
     
     # Section scan de code-barres
     st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
@@ -851,7 +1069,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec webcam en direct")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
