@@ -12,8 +12,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
 import time
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
-import av
+from threading import Thread
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -111,6 +110,7 @@ st.markdown("""
         border-radius: 10px;
         padding: 10px;
         margin: 10px 0;
+        background: #f8f9fa;
     }
     .stats-box {
         background: #f8f9fa;
@@ -122,9 +122,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== CLASSE POUR LE TRAITEMENT VIDÉO EN DIRECT ====================
-class VideoProcessor(VideoTransformerBase):
-    def __init__(self):
+# ==================== CLASSE POUR LA WEBCAM EN DIRECT ====================
+class WebcamStream:
+    def __init__(self, camera_id=2):
+        self.camera_id = camera_id
+        self.cap = None
+        self.running = False
+        self.frame = None
+        self.nb_pieces = 0
+        self.stats_couleur = defaultdict(int)
+        self.stats_taille = defaultdict(int)
         self.couleurs = {
             'rouge': {
                 'lower1': np.array([0, 100, 100]), 'upper1': np.array([10, 255, 255]),
@@ -152,11 +159,6 @@ class VideoProcessor(VideoTransformerBase):
             'TG': (5000, float('inf'))
         }
         
-        self.frame_count = 0
-        self.stats_couleur = defaultdict(int)
-        self.stats_taille = defaultdict(int)
-        self.total_cumule = 0
-        
     def get_couleur_piece(self, hsv, contour):
         """Détermine la couleur d'une pièce"""
         mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
@@ -164,7 +166,6 @@ class VideoProcessor(VideoTransformerBase):
         
         best_couleur = '?'
         best_score = 0
-        best_color_bbox = (128, 128, 128)
         
         for nom_couleur, params in self.couleurs.items():
             if 'lower1' in params:
@@ -183,9 +184,8 @@ class VideoProcessor(VideoTransformerBase):
                 if score > best_score and score > 0.2:
                     best_score = score
                     best_couleur = nom_couleur
-                    best_color_bbox = params['couleur_bbox']
         
-        return best_couleur, best_color_bbox
+        return best_couleur
     
     def get_taille_piece(self, aire):
         """Détermine la taille d'une pièce"""
@@ -220,9 +220,8 @@ class VideoProcessor(VideoTransformerBase):
                 continue
             
             x, y, w, h = cv2.boundingRect(contour)
-            centre = (x + w//2, y + h//2)
             
-            couleur_nom, couleur_bbox = self.get_couleur_piece(hsv, contour)
+            couleur_nom = self.get_couleur_piece(hsv, contour)
             taille_nom = self.get_taille_piece(aire)
             
             pieces_valides.append(contour)
@@ -230,19 +229,11 @@ class VideoProcessor(VideoTransformerBase):
             stats_taille_actuelles[taille_nom] += 1
             
             # Dessiner la pièce
+            couleur_bbox = self.couleurs.get(couleur_nom, {}).get('couleur_bbox', (128, 128, 128))
             cv2.rectangle(resultat, (x, y), (x+w, y+h), couleur_bbox, 2)
-            cv2.circle(resultat, centre, 3, (255, 255, 255), -1)
+            cv2.circle(resultat, (x + w//2, y + h//2), 3, (255, 255, 255), -1)
         
         nb_pieces = len(pieces_valides)
-        self.frame_count += 1
-        
-        # Mise à jour des stats cumulées
-        for couleur, count in stats_couleur_actuelles.items():
-            self.stats_couleur[couleur] = count
-        
-        # Mettre à jour le total cumulé (optionnel)
-        if nb_pieces > self.total_cumule:
-            self.total_cumule = nb_pieces
         
         # Ajouter les informations sur l'image
         h, w = resultat.shape[:2]
@@ -251,7 +242,7 @@ class VideoProcessor(VideoTransformerBase):
         cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         
-        # Statistiques en direct
+        # Statistiques
         y_stats = 60
         cv2.putText(resultat, f"Couleurs: R:{stats_couleur_actuelles.get('rouge',0)} B:{stats_couleur_actuelles.get('bleu',0)} V:{stats_couleur_actuelles.get('vert',0)} J:{stats_couleur_actuelles.get('jaune',0)}", 
                    (10, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -260,16 +251,48 @@ class VideoProcessor(VideoTransformerBase):
         cv2.putText(resultat, f"Tailles: P:{stats_taille_actuelles.get('P',0)} M:{stats_taille_actuelles.get('M',0)} G:{stats_taille_actuelles.get('G',0)} TG:{stats_taille_actuelles.get('TG',0)}", 
                    (10, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
-        return resultat, nb_pieces
+        return resultat, nb_pieces, stats_couleur_actuelles, stats_taille_actuelles
     
-    def recv(self, frame):
-        """Reçoit une frame de la webcam et la traite"""
-        img = frame.to_ndarray(format="bgr24")
+    def start(self):
+        """Démarre le flux webcam"""
+        self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
+        if not self.cap.isOpened():
+            return False
         
-        # Traitement de l'image
-        resultat, nb_pieces = self.detecter_pieces_live(img)
+        # Configuration
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
-        return av.VideoFrame.from_ndarray(resultat, format="bgr24")
+        self.running = True
+        self.thread = Thread(target=self._update)
+        self.thread.daemon = True
+        self.thread.start()
+        return True
+    
+    def _update(self):
+        """Met à jour la frame en continu"""
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                # Traiter la frame
+                resultat, nb_pieces, stats_couleur, stats_taille = self.detecter_pieces_live(frame)
+                self.frame = resultat
+                self.nb_pieces = nb_pieces
+                self.stats_couleur = stats_couleur
+                self.stats_taille = stats_taille
+            time.sleep(0.03)  # ~30 FPS
+    
+    def read(self):
+        """Lit la dernière frame traitée"""
+        return self.frame
+    
+    def stop(self):
+        """Arrête le flux"""
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        if self.cap:
+            self.cap.release()
 
 # ==================== FONCTIONS EXISTANTES ====================
 def detecter_code_barre(image):
@@ -361,22 +384,135 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
-# ==================== CLASSE GESTIONNAIRE (inchangée) ====================
+def test_cameras():
+    """Teste les différentes caméras disponibles"""
+    st.write("### 🔍 Test des caméras disponibles")
+    working_cameras = []
+    
+    for i in range(5):  # Tester les 5 premiers index
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret:
+                working_cameras.append(i)
+                st.success(f"✅ Caméra {i} fonctionne")
+            else:
+                st.warning(f"⚠️ Caméra {i} détectée mais ne capture pas")
+            cap.release()
+        else:
+            st.error(f"❌ Caméra {i} non disponible")
+    
+    if working_cameras:
+        st.info(f"✅ Caméras fonctionnelles : {working_cameras}")
+        return working_cameras
+    else:
+        st.error("❌ Aucune caméra trouvée")
+        return []
+
+def webcam_section():
+    """Section webcam avec OpenCV direct"""
+    st.markdown('<div class="webcam-container">', unsafe_allow_html=True)
+    st.markdown("### 📷 Webcam en direct - Comptage automatique")
+    
+    # Initialisation dans session_state
+    if 'webcam_stream' not in st.session_state:
+        st.session_state.webcam_stream = None
+    if 'webcam_active' not in st.session_state:
+        st.session_state.webcam_active = False
+    if 'camera_index' not in st.session_state:
+        st.session_state.camera_index = 2
+    
+    # Interface de contrôle
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    
+    with col1:
+        # Test des caméras
+        if st.button("🔍 Tester les caméras"):
+            working = test_cameras()
+            if working:
+                st.session_state.camera_index = working[0]
+    
+    with col2:
+        camera_id = st.number_input("Index caméra", 
+                                   min_value=0, 
+                                   max_value=10, 
+                                   value=st.session_state.camera_index,
+                                   step=1,
+                                   key="camera_input")
+        st.session_state.camera_index = camera_id
+    
+    with col3:
+        if not st.session_state.webcam_active:
+            if st.button("▶️ Démarrer", use_container_width=True):
+                stream = WebcamStream(camera_id)
+                if stream.start():
+                    st.session_state.webcam_stream = stream
+                    st.session_state.webcam_active = True
+                    st.rerun()
+                else:
+                    st.error(f"❌ Impossible d'ouvrir la caméra {camera_id}")
+        else:
+            if st.button("⏹️ Arrêter", use_container_width=True):
+                if st.session_state.webcam_stream:
+                    st.session_state.webcam_stream.stop()
+                st.session_state.webcam_stream = None
+                st.session_state.webcam_active = False
+                st.rerun()
+    
+    with col4:
+        if st.session_state.webcam_active:
+            st.success("✅ Active")
+    
+    # Affichage du flux
+    if st.session_state.webcam_active and st.session_state.webcam_stream:
+        frame = st.session_state.webcam_stream.read()
+        if frame is not None:
+            # Afficher l'image
+            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                    channels="RGB", use_column_width=True)
+            
+            # Statistiques en direct
+            stream = st.session_state.webcam_stream
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+            
+            with col_s1:
+                st.metric("Total pièces", stream.nb_pieces)
+            with col_s2:
+                rouge = stream.stats_couleur.get('rouge', 0)
+                bleu = stream.stats_couleur.get('bleu', 0)
+                st.metric("Rouge/Bleu", f"{rouge}/{bleu}")
+            with col_s3:
+                vert = stream.stats_couleur.get('vert', 0)
+                jaune = stream.stats_couleur.get('jaune', 0)
+                st.metric("Vert/Jaune", f"{vert}/{jaune}")
+            with col_s4:
+                st.metric("Caméra", f"Index {camera_id}")
+            
+            # Option pour capturer
+            if st.button("📸 Capturer cette image pour l'article"):
+                # Convertir l'image en base64 pour la sauvegarde
+                _, buffer = cv2.imencode('.jpg', frame)
+                img_base64 = base64.b64encode(buffer).decode('utf-8')
+                st.session_state.derniere_capture = {
+                    'image': img_base64,
+                    'nb_pieces': stream.nb_pieces,
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.success(f"✅ Image capturée avec {stream.nb_pieces} pièces!")
+            
+            # Refresh automatique
+            time.sleep(0.1)
+            st.rerun()
+    else:
+        st.info("👆 Cliquez sur 'Démarrer' pour activer la webcam")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ==================== CLASSE GESTIONNAIRE ====================
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
         self.articles = {}  # Dictionnaire {code_article: {"libelle": "", "photos": [], "emplacement": ""}}
-        self.reset_article_courant()
-    
-    def reset_article_courant(self):
-        """Réinitialise l'article en cours de saisie"""
-        self.article_courant = {
-            'code': '',
-            'libelle': '',
-            'emplacement': '',
-            'photos': [],
-            'total_pieces': 0
-        }
     
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
@@ -416,6 +552,20 @@ class GestionnairePieces:
             
             self.articles[code_article]['photos'].append(photo_data)
             return True
+        return False
+    
+    def ajouter_capture_webcam(self, code_article, capture_data):
+        """Ajoute une capture depuis la webcam"""
+        if code_article in self.articles and capture_data:
+            # Convertir base64 en image
+            img_data = base64.b64decode(capture_data['image'])
+            frame = cv2.imdecode(np.frombuffer(img_data, np.uint8), cv2.IMREAD_COLOR)
+            
+            # Analyser l'image
+            resultat, nb_pieces = detecter_pieces(frame)
+            
+            # Ajouter la photo
+            return self.ajouter_photo_article(code_article, frame, resultat, nb_pieces)
         return False
     
     def get_total_article(self, code_article):
@@ -481,7 +631,7 @@ class GestionnairePieces:
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
-        # En-têtes (ajout de la colonne Libellé)
+        # En-têtes
         headers = ["Code Article", "Libellé", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
@@ -519,7 +669,7 @@ class GestionnairePieces:
         # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
-        # En-têtes détail (ajout des colonnes Libellé et Emplacement)
+        # En-têtes détail
         detail_headers = ["Code Article", "Libellé", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
@@ -571,8 +721,8 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
-if 'webcam_active' not in st.session_state:
-    st.session_state.webcam_active = False
+if 'derniere_capture' not in st.session_state:
+    st.session_state.derniere_capture = None
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -661,55 +811,18 @@ if st.session_state.page == "saisie":
     # Page de saisie d'un nouvel article avec scan de code-barres
     st.header("➕ Ajouter un nouvel article")
     
-    # Section webcam en direct (NOUVEAU)
-    st.markdown("### 📷 Webcam en direct")
-    st.markdown('<div class="webcam-container">', unsafe_allow_html=True)
+    # Section webcam en direct
+    webcam_section()
     
-    col_cam1, col_cam2 = st.columns([3, 1])
-    with col_cam1:
-        # Activer/Désactiver la webcam
-        webcam_active = st.checkbox("Activer la webcam", value=st.session_state.webcam_active)
-        
-        if webcam_active != st.session_state.webcam_active:
-            st.session_state.webcam_active = webcam_active
-            st.rerun()
+    # Capture depuis la webcam
+    if st.session_state.derniere_capture and st.session_state.article_selectionne:
+        st.info(f"📸 Dernière capture : {st.session_state.derniere_capture['nb_pieces']} pièces")
+        if st.button("✅ Ajouter cette capture à l'article"):
+            if gestionnaire.ajouter_capture_webcam(st.session_state.article_selectionne, st.session_state.derniere_capture):
+                st.success("✅ Capture ajoutée avec succès!")
+                st.session_state.derniere_capture = None
+                st.rerun()
     
-    with col_cam2:
-        if st.session_state.webcam_active:
-            st.info("Webcam active - Comptage en direct")
-    
-    if st.session_state.webcam_active:
-        # Utiliser streamlit-webrtc pour la webcam
-        ctx = webrtc_streamer(
-            key="webcam-pieces",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=VideoProcessor,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True,
-        )
-        
-        # Afficher les statistiques en direct
-        if ctx and ctx.video_processor:
-            processor = ctx.video_processor
-            st.markdown("""
-            <div class="stats-box">
-                <h4>📊 Statistiques en direct</h4>
-                <p>Comptage des pièces en temps réel avec détection des couleurs et tailles</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Afficher les dernières statistiques
-            col_stats1, col_stats2, col_stats3 = st.columns(3)
-            with col_stats1:
-                st.metric("Pièces détectées", processor.total_cumule)
-            with col_stats2:
-                st.metric("Rouge", processor.stats_couleur.get('rouge', 0))
-                st.metric("Bleu", processor.stats_couleur.get('bleu', 0))
-            with col_stats3:
-                st.metric("Vert", processor.stats_couleur.get('vert', 0))
-                st.metric("Jaune", processor.stats_couleur.get('jaune', 0))
-    
-    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown("---")
     
     # Section scan de code-barres
@@ -837,7 +950,7 @@ if st.session_state.page == "saisie":
             key="emplacement_input"
         )
     
-    # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
+    # Afficher le message si l'article est trouvé
     if code_article and code_article in ARTICLES_PREDEFINIS:
         st.markdown(f"""
         <div class="article-found">
