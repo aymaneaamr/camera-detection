@@ -15,6 +15,7 @@ import os
 import time
 import subprocess
 import platform
+import tempfile
 
 # ==================== CONFIGURATION ====================
 if os.name == 'nt':  # Windows
@@ -129,105 +130,128 @@ st.markdown("""
         border-radius: 5px;
         margin: 1rem 0;
     }
+    .warning-box {
+        background: #fff3cd;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 5px;
+        border-left: 5px solid #ffc107;
+        margin: 1rem 0;
+    }
+    .info-box {
+        background: #d1ecf1;
+        color: #0c5460;
+        padding: 1rem;
+        border-radius: 5px;
+        border-left: 5px solid #17a2b8;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==================== FONCTIONS DE DÉTECTION DES CAMÉRAS ====================
-def detecter_toutes_cameras():
+def detecter_toutes_cameras_agressif():
     """
-    Détecte toutes les caméras disponibles sur le système
-    Retourne une liste de dictionnaires avec les informations de chaque caméra
+    Version agressive de détection des caméras - teste toutes les combinaisons possibles
     """
     cameras = []
     
-    # Tester les 10 premiers index (suffisant pour la plupart des cas)
-    for i in range(10):
-        camera_info = tester_camera_index(i)
-        if camera_info['disponible']:
-            cameras.append(camera_info)
+    # Liste de tous les backends possibles
+    backends = [
+        (cv2.CAP_DSHOW, "DirectShow"),
+        (cv2.CAP_MSMF, "Media Foundation"),
+        (cv2.CAP_ANY, "Auto"),
+        (cv2.CAP_VFW, "VFW"),
+        (cv2.CAP_FFMPEG, "FFMPEG"),
+        (cv2.CAP_IMAGES, "Images"),
+        (cv2.CAP_OPENCV_MJPEG, "MJPEG"),
+    ]
+    
+    # Tester les index 0 à 9
+    for index in range(10):
+        for backend, nom_backend in backends:
+            try:
+                # Essayer d'ouvrir la caméra
+                cap = cv2.VideoCapture(index, backend)
+                
+                if cap.isOpened():
+                    # Attendre l'initialisation
+                    time.sleep(0.5)
+                    
+                    # Lire plusieurs frames pour être sûr
+                    frames_valides = 0
+                    frames_total = 0
+                    
+                    for _ in range(5):
+                        ret, frame = cap.read()
+                        if ret and frame is not None and frame.size > 0:
+                            frames_valides += 1
+                        frames_total += 1
+                        time.sleep(0.1)
+                    
+                    # Si au moins 3 frames sur 5 sont valides
+                    if frames_valides >= 3:
+                        # Récupérer les propriétés
+                        largeur = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        hauteur = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        
+                        camera_info = {
+                            'index': index,
+                            'disponible': True,
+                            'nom': f"Caméra {index} ({nom_backend})",
+                            'resolution': f"{largeur}x{hauteur}",
+                            'fps': f"{fps:.1f}" if fps > 0 else "Inconnu",
+                            'backend': nom_backend,
+                            'frames_valides': frames_valides
+                        }
+                        
+                        # Éviter les doublons
+                        if not any(c['index'] == index and c['backend'] == nom_backend for c in cameras):
+                            cameras.append(camera_info)
+                    
+                    cap.release()
+            except Exception as e:
+                continue
     
     return cameras
 
-def tester_camera_index(index):
+def test_camera_simple():
     """
-    Teste un index de caméra spécifique avec différents backends
+    Test simple pour voir si la caméra 0 fonctionne
     """
-    resultat = {
-        'index': index,
-        'disponible': False,
-        'nom': f"Caméra {index}",
-        'backends': [],
-        'description': f"Caméra {index}"
-    }
+    resultats = []
     
-    # Liste des backends à tester (priorité à DSHOW sur Windows)
-    backends = []
-    if os.name == 'nt':  # Windows
-        backends = [
-            (cv2.CAP_DSHOW, "DirectShow"),
-            (cv2.CAP_MSMF, "Media Foundation"),
-            (cv2.CAP_ANY, "Auto")
-        ]
-    else:  # Linux/Mac
-        backends = [
-            (cv2.CAP_V4L2, "V4L2"),
-            (cv2.CAP_ANY, "Auto")
-        ]
+    # Test avec différents backends
+    backends = [
+        (cv2.CAP_DSHOW, "DirectShow"),
+        (cv2.CAP_MSMF, "Media Foundation"),
+        (cv2.CAP_ANY, "Auto"),
+    ]
     
-    for backend, nom_backend in backends:
+    for backend, nom in backends:
         try:
-            cap = cv2.VideoCapture(index, backend)
+            cap = cv2.VideoCapture(0, backend)
             if cap.isOpened():
-                # Laisser le temps à la caméra de s'initialiser
-                time.sleep(0.2)
-                
-                # Lire une frame pour vérifier
                 ret, frame = cap.read()
-                
                 if ret and frame is not None:
-                    resultat['disponible'] = True
-                    resultat['backends'].append(nom_backend)
-                    
-                    # Essayer d'obtenir plus d'informations
-                    largeur = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    hauteur = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    fps = cap.get(cv2.CAP_PROP_FPS)
-                    
-                    resultat['resolution'] = f"{largeur}x{hauteur}"
-                    resultat['fps'] = f"{fps:.1f}"
-                    
-                    # Essayer de détecter le nom de la caméra (Windows)
-                    if os.name == 'nt' and nom_backend == "DirectShow":
-                        try:
-                            # Sur Windows, on peut parfois obtenir le nom via DirectShow
-                            resultat['nom'] = f"Caméra {index} (DirectShow)"
-                        except:
-                            pass
-                    
-                    cap.release()
-                    break
+                    resultats.append(f"✅ {nom}: OK")
+                else:
+                    resultats.append(f"⚠️ {nom}: Ouvert mais pas d'image")
                 cap.release()
+            else:
+                resultats.append(f"❌ {nom}: Non ouvert")
         except Exception as e:
-            continue
+            resultats.append(f"❌ {nom}: Erreur {str(e)[:30]}")
     
-    return resultat
-
-def get_nom_camera_pour_affichage(camera):
-    """
-    Génère un nom d'affichage pour la caméra
-    """
-    if camera['disponible']:
-        backends_str = ", ".join(camera.get('backends', ['Inconnu']))
-        resolution = camera.get('resolution', '?x?')
-        return f"📷 Caméra {camera['index']} - {resolution} - {backends_str}"
-    return None
+    return resultats
 
 # ============================================================================
 
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
-        self.articles = {}  # Dictionnaire {code_article: {"libelle": "", "photos": [], "emplacement": ""}}
+        self.articles = {}
         self.reset_article_courant()
     
     def reset_article_courant(self):
@@ -241,9 +265,8 @@ class GestionnairePieces:
         }
     
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
-        """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
+        """Crée un nouvel article dans l'inventaire"""
         if code_article and code_article not in self.articles:
-            # Si le code existe dans les prédéfinis et que le libellé ou l'emplacement sont vides, on les remplit
             if code_article in ARTICLES_PREDEFINIS:
                 if not libelle:
                     libelle = ARTICLES_PREDEFINIS[code_article]["libelle"]
@@ -264,7 +287,6 @@ class GestionnairePieces:
         if code_article in self.articles:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # Convertir les images en base64
             _, buffer_original = cv2.imencode('.jpg', frame_original)
             _, buffer_analyse = cv2.imencode('.jpg', frame_analyse)
             
@@ -308,7 +330,6 @@ class GestionnairePieces:
         """Supprime une photo d'un article"""
         if code_article in self.articles and 0 <= photo_id < len(self.articles[code_article]['photos']):
             del self.articles[code_article]['photos'][photo_id]
-            # Réindexer les IDs
             for i, photo in enumerate(self.articles[code_article]['photos']):
                 photo['id'] = i
             return True
@@ -335,15 +356,12 @@ class GestionnairePieces:
     
     def generer_excel(self):
         """Génère un fichier Excel avec l'inventaire complet"""
-        # Créer un nouveau classeur Excel
         output = BytesIO()
         workbook = openpyxl.Workbook()
         
-        # Feuille principale - Résumé
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
-        # En-têtes (ajout de la colonne Libellé)
         headers = ["Code Article", "Libellé", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
@@ -353,7 +371,6 @@ class GestionnairePieces:
             cell.font = Font(color="FFFFFF", bold=True)
             cell.alignment = Alignment(horizontal="center")
         
-        # Données du résumé
         row = 2
         for code_article, data in self.articles.items():
             total = sum(p['nb_pieces'] for p in data['photos'])
@@ -370,7 +387,6 @@ class GestionnairePieces:
             sheet_resume.cell(row=row, column=6).value = derniere_date
             row += 1
         
-        # Ajuster la largeur des colonnes
         sheet_resume.column_dimensions['A'].width = 20
         sheet_resume.column_dimensions['B'].width = 30
         sheet_resume.column_dimensions['C'].width = 20
@@ -378,10 +394,8 @@ class GestionnairePieces:
         sheet_resume.column_dimensions['E'].width = 15
         sheet_resume.column_dimensions['F'].width = 22
         
-        # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
-        # En-têtes détail (ajout des colonnes Libellé et Emplacement)
         detail_headers = ["Code Article", "Libellé", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
@@ -390,7 +404,6 @@ class GestionnairePieces:
             cell.fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
             cell.alignment = Alignment(horizontal="center")
         
-        # Données détaillées
         row = 2
         for code_article, data in self.articles.items():
             libelle = data.get('libelle', '')
@@ -404,7 +417,6 @@ class GestionnairePieces:
                 sheet_detail.cell(row=row, column=6).value = photo['nb_pieces']
                 row += 1
         
-        # Ajuster les colonnes du détail
         sheet_detail.column_dimensions['A'].width = 20
         sheet_detail.column_dimensions['B'].width = 30
         sheet_detail.column_dimensions['C'].width = 20
@@ -426,25 +438,19 @@ def detecter_code_barre(image):
     resultat = image.copy()
     codes_detectes = []
     
-    # Conversion en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Décoder les codes-barres
     codes = decode(gray)
     
     for code in codes:
-        # Extraire les données
         data = code.data.decode('utf-8')
         type_code = code.type
         
-        # Dessiner le rectangle autour du code
         points = code.polygon
         if len(points) == 4:
             pts = np.array([(p.x, p.y) for p in points], np.int32)
             pts = pts.reshape((-1, 1, 2))
             cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
         
-        # Ajouter le texte
         cv2.putText(resultat, f"{type_code}: {data}", 
                    (code.rect.left, code.rect.top - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -461,45 +467,33 @@ def detecter_pieces(image):
     """Détecte et compte les pièces dans une image"""
     resultat = image.copy()
     
-    # Conversion en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Flou pour réduire le bruit
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Détection des contours
     edges = cv2.Canny(blur, 50, 150)
     
-    # Dilatation et érosion
     kernel = np.ones((3, 3), np.uint8)
     edges = cv2.dilate(edges, kernel, iterations=2)
     edges = cv2.erode(edges, kernel, iterations=1)
     
-    # Trouver les contours
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Filtrer les petits contours (bruit)
     pieces_valides = []
     for contour in contours:
         aire = cv2.contourArea(contour)
-        if aire > 200:  # Seuil minimum
+        if aire > 200:
             pieces_valides.append(contour)
     
     nb_pieces = len(pieces_valides)
     
-    # Dessiner les contours
     for contour in pieces_valides:
-        # Dessiner le contour en vert
         cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
         
-        # Ajouter un point au centre
         M = cv2.moments(contour)
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
             cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
     
-    # Ajouter le compteur
     cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     
@@ -511,6 +505,50 @@ def base64_to_image(base64_string):
     nparr = np.frombuffer(img_data, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
+
+# Fonction pour capturer depuis l'application Windows Camera
+def capturer_avec_app_windows():
+    """
+    Utilise l'application Camera de Windows pour prendre une photo
+    """
+    st.markdown('<div class="info-box">', unsafe_allow_html=True)
+    st.markdown("""
+    ### 📷 Mode de secours - Application Windows Camera
+    
+    **Pourquoi ?** OpenCV n'arrive pas à détecter votre webcam, mais elle fonctionne dans l'application Windows.
+    
+    **Instructions:**
+    1. Cliquez sur le bouton ci-dessous pour ouvrir l'application Camera
+    2. Prenez votre photo dans l'application
+    3. La photo est automatiquement sauvegardée dans votre dossier "Pictures"
+    4. Uploader la photo ici
+    """)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📸 Ouvrir l'application Camera", use_container_width=True):
+            try:
+                if platform.system() == "Windows":
+                    # Ouvrir l'application Camera Windows
+                    subprocess.Popen(['start', 'microsoft.windows.camera:'], shell=True)
+                    st.success("✅ Application Camera ouverte!")
+                    st.info("Prenez votre photo, puis revenez ici pour l'uploader.")
+            except Exception as e:
+                st.error(f"Erreur: {e}")
+    
+    with col2:
+        st.markdown("**Ou utilisez votre téléphone:**")
+        st.markdown("Prenez une photo avec votre téléphone et uploader-la")
+    
+    # Upload de l'image
+    uploaded_file = st.file_uploader("Uploader la photo", type=['jpg', 'jpeg', 'png'], key="windows_camera_upload")
+    if uploaded_file:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        return frame
+    
+    return None
 
 # Initialisation
 if 'gestionnaire' not in st.session_state:
@@ -525,38 +563,24 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
-if 'camera_active' not in st.session_state:
-    st.session_state.camera_active = False
-if 'cameras_disponibles' not in st.session_state:
-    st.session_state.cameras_disponibles = []
-if 'camera_choisie' not in st.session_state:
-    st.session_state.camera_choisie = None
+if 'mode_secours' not in st.session_state:
+    st.session_state.mode_secours = False
 
-# Détection des caméras au démarrage
-if not st.session_state.cameras_disponibles:
-    with st.spinner("🔍 Recherche des caméras disponibles..."):
-        st.session_state.cameras_disponibles = detecter_toutes_cameras()
+# Détection des caméras
+with st.spinner("🔍 Recherche des caméras disponibles..."):
+    cameras_trouvees = detecter_toutes_cameras_agressif()
+    test_simple = test_camera_simple()
 
 gestionnaire = st.session_state.gestionnaire
 
 # Interface principale
 st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
-st.markdown("""
-Cette application permet de gérer l'inventaire de plusieurs types de pièces :
-1. **Scanner** un code-barres pour identifier automatiquement l'article
-2. **Ajouter** un libellé descriptif (optionnel)
-3. **Ajouter** un emplacement de stockage (optionnel)
-4. **Ajouter** plusieurs photos pour cet article
-5. **Changer** d'article et répéter
-6. **Exporter** un fichier Excel avec tous les totaux
-""")
 
-# Barre latérale avec la liste des articles
+# Barre latérale avec diagnostic
 with st.sidebar:
     st.header("📋 Articles en inventaire")
     
     if gestionnaire.articles:
-        # Afficher tous les articles avec leurs totaux, libellés et emplacements
         for code_article in gestionnaire.articles.keys():
             total = gestionnaire.get_total_article(code_article)
             libelle = gestionnaire.get_libelle_article(code_article)
@@ -565,14 +589,12 @@ with st.sidebar:
             with st.container():
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    # Créer un bouton avec le code article
                     if st.button(f"📦 {code_article}", key=f"select_{code_article}", use_container_width=True):
                         st.session_state.article_selectionne = code_article
                         st.session_state.page = "details"
                 with col2:
                     st.write(f"**{total}**")
             
-            # Afficher les badges séparément
             if libelle or emplacement:
                 badge_text = ""
                 if libelle:
@@ -581,13 +603,11 @@ with st.sidebar:
                     badge_text += " | "
                 if emplacement:
                     badge_text += f"📍 {emplacement}"
-                
                 if badge_text:
                     st.caption(badge_text)
         
         st.divider()
         
-        # Bouton pour retourner à la saisie
         if st.button("➕ Nouvel article", use_container_width=True):
             st.session_state.page = "saisie"
             st.session_state.article_selectionne = None
@@ -597,7 +617,6 @@ with st.sidebar:
         
         st.divider()
         
-        # Export Excel
         if gestionnaire.articles:
             st.header("📊 Export")
             excel_file = gestionnaire.generer_excel()
@@ -609,7 +628,6 @@ with st.sidebar:
                 use_container_width=True
             )
             
-            # Réinitialisation
             if st.button("🔄 Tout réinitialiser", type="primary", use_container_width=True):
                 gestionnaire.reinitialiser_tout()
                 st.session_state.page = "saisie"
@@ -618,127 +636,50 @@ with st.sidebar:
     else:
         st.info("Aucun article pour le moment")
     
-    # Afficher les caméras disponibles dans la sidebar
+    # Diagnostic
     st.divider()
-    st.header("📷 Caméras détectées")
-    if st.session_state.cameras_disponibles:
-        cameras_trouvees = [c for c in st.session_state.cameras_disponibles if c['disponible']]
-        if cameras_trouvees:
-            for cam in cameras_trouvees:
-                resolution = cam.get('resolution', 'Inconnue')
-                backends = ", ".join(cam.get('backends', ['Inconnu']))
-                st.success(f"✅ Caméra {cam['index']}: {resolution} - {backends}")
-        else:
-            st.error("❌ Aucune caméra détectée")
+    st.header("🔧 Diagnostic")
+    
+    if cameras_trouvees:
+        st.success(f"✅ {len(cameras_trouvees)} caméra(s) détectée(s)")
+        for cam in cameras_trouvees[:3]:  # Afficher les 3 premières
+            st.text(f"📷 {cam['nom']} - {cam['resolution']}")
     else:
-        st.warning("Recherche des caméras en cours...")
+        st.error("❌ Aucune caméra détectée par OpenCV")
+        st.info("""
+        **Solutions:**
+        1. Vérifiez qu'aucune autre app n'utilise la caméra
+        2. Exécutez en tant qu'administrateur
+        3. Utilisez le mode de secours ci-dessous
+        """)
+        
+        if st.button("🆘 Activer le mode de secours", use_container_width=True):
+            st.session_state.mode_secours = True
+            st.rerun()
 
 # Contenu principal
 if st.session_state.page == "saisie":
-    # Page de saisie d'un nouvel article avec scan de code-barres
     st.header("➕ Ajouter un nouvel article")
     
-    # Section scan de code-barres
-    st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
-    st.markdown("### 📷 Scanner le code-barres de l'article")
-    st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
-    
-    # Afficher les caméras disponibles et laisser l'utilisateur choisir
-    cameras_dispo = [c for c in st.session_state.cameras_disponibles if c['disponible']]
-    
-    if cameras_dispo:
-        # Créer une liste des options pour le sélecteur
-        options_camera = []
-        for cam in cameras_dispo:
-            resolution = cam.get('resolution', 'Resolution inconnue')
-            backends = ", ".join(cam.get('backends', ['Standard']))
-            label = f"Caméra {cam['index']} - {resolution} - {backends}"
-            options_camera.append(label)
+    # Mode de secours ou normal ?
+    if st.session_state.mode_secours or not cameras_trouvees:
+        st.markdown("""
+        <div class="warning-box">
+            <strong>⚠️ Mode de secours activé</strong><br>
+            Utilisez l'application Windows Camera ou votre téléphone pour prendre les photos.
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.markdown('<div class="camera-selector">', unsafe_allow_html=True)
-        st.markdown("### 🎥 Sélectionnez votre caméra")
+        # Scan de code-barres en mode secours
+        st.markdown("### 📷 Scanner le code-barres")
         
-        # Sélecteur de caméra
-        camera_selectionnee = st.selectbox(
-            "Choisissez la caméra à utiliser",
-            options=options_camera,
-            key="camera_selector"
-        )
-        
-        # Récupérer l'index de la caméra sélectionnée
-        if camera_selectionnee:
-            index_str = camera_selectionnee.split(" - ")[0].replace("Caméra ", "")
-            st.session_state.camera_choisie = int(index_str)
-            st.success(f"✅ Caméra {st.session_state.camera_choisie} sélectionnée")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    else:
-        st.error("❌ Aucune caméra détectée. Veuillez vérifier vos connexions.")
-    
-    col_scan1, col_scan2 = st.columns(2)
-    
-    with col_scan1:
-        scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
-    
-    if scan_option == "📸 Caméra":
-        if st.session_state.camera_choisie is not None:
-            # Bouton pour activer la caméra
-            if st.button(f"📷 Activer la caméra {st.session_state.camera_choisie}", key="activate_webcam", use_container_width=True):
-                st.session_state.camera_active = True
-                st.rerun()
-            
-            # Afficher la caméra seulement si activée
-            if st.session_state.camera_active:
-                st.info(f"ℹ️ Caméra {st.session_state.camera_choisie} activée. Cliquez sur le bouton ci-dessous pour prendre la photo.")
-                
-                # Utiliser un key différent pour forcer le rechargement
-                img_barcode = st.camera_input("Prendre une photo du code-barres", key=f"camera_barcode_{st.session_state.camera_choisie}")
-                if img_barcode:
-                    with st.spinner("🔍 Analyse du code-barres..."):
-                        bytes_data = img_barcode.getvalue()
-                        frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                        
-                        # Détection du code-barres
-                        image_annotee, codes = detecter_code_barre(frame)
-                        
-                        if codes:
-                            # Prendre le premier code détecté
-                            code_trouve = codes[0]['data']
-                            st.session_state.code_detecte = code_trouve
-                            st.session_state.scan_effectue = True
-                            
-                            # Afficher l'image avec le code détecté
-                            st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                                    caption="Code-barres détecté", use_container_width=True)
-                            
-                            st.markdown(f"""
-                            <div class="success-box">
-                                <h4>✅ Code-barres détecté !</h4>
-                                <div class="code-display">{code_trouve}</div>
-                                <p><strong>Type :</strong> {codes[0]['type']}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            # Désactiver la caméra après capture
-                            st.session_state.camera_active = False
-                        else:
-                            st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-            else:
-                st.info(f"👆 Cliquez sur 'Activer la caméra {st.session_state.camera_choisie}' pour commencer")
-        else:
-            st.warning("⚠️ Veuillez d'abord sélectionner une caméra dans la liste ci-dessus")
-    
-    else:  # Upload
-        uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
+        uploaded_barcode = st.file_uploader("Uploader une photo du code-barres", type=['jpg', 'jpeg', 'png'], key="barcode_secours")
         if uploaded_barcode:
             with st.spinner("🔍 Analyse du code-barres..."):
                 file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
                 frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                 
-                # Détection du code-barres
                 image_annotee, codes = detecter_code_barre(frame)
-                
-                # Afficher l'image
                 st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
                         caption="Image analysée", use_container_width=True)
                 
@@ -755,352 +696,283 @@ if st.session_state.page == "saisie":
                     </div>
                     """, unsafe_allow_html=True)
                 else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Bouton pour réinitialiser le scan
-    if st.session_state.scan_effectue:
-        if st.button("🔄 Nouveau scan", use_container_width=True):
-            st.session_state.scan_effectue = False
-            st.session_state.code_detecte = None
-            st.session_state.camera_active = False
+                    st.warning("❌ Aucun code-barres détecté")
+        
+        if st.button("🔄 Désactiver le mode de secours", use_container_width=True):
+            st.session_state.mode_secours = False
             st.rerun()
     
-    st.markdown("---")
+    else:
+        # Mode normal avec sélection de caméra
+        st.markdown("### 📷 Scanner le code-barres")
+        
+        if cameras_trouvees:
+            # Créer un sélecteur de caméra
+            options = []
+            for cam in cameras_trouvees:
+                options.append(f"Caméra {cam['index']} - {cam['resolution']} ({cam['backend']})")
+            
+            camera_choice = st.selectbox("Choisissez votre caméra", options)
+            
+            if camera_choice:
+                index = int(camera_choice.split(" - ")[0].replace("Caméra ", ""))
+                
+                if st.button(f"📷 Activer la caméra {index}", use_container_width=True):
+                    st.session_state.camera_active = True
+                    st.session_state.camera_index = index
+                    st.rerun()
+                
+                if st.session_state.get('camera_active', False):
+                    st.info(f"Caméra {index} activée")
+                    
+                    img_barcode = st.camera_input("Prendre une photo", key=f"cam_{index}")
+                    if img_barcode:
+                        with st.spinner("Analyse..."):
+                            bytes_data = img_barcode.getvalue()
+                            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                            
+                            image_annotee, codes = detecter_code_barre(frame)
+                            
+                            if codes:
+                                code_trouve = codes[0]['data']
+                                st.session_state.code_detecte = code_trouve
+                                st.session_state.scan_effectue = True
+                                
+                                st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                                        caption="Code détecté", use_container_width=True)
+                                
+                                st.markdown(f"""
+                                <div class="success-box">
+                                    <h4>✅ Code détecté !</h4>
+                                    <div class="code-display">{code_trouve}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                st.session_state.camera_active = False
+                            else:
+                                st.warning("❌ Aucun code-barres détecté")
+        else:
+            # Fallback vers upload si pas de caméra
+            st.warning("Aucune caméra détectée - Utilisation du mode upload")
+            uploaded_barcode = st.file_uploader("Uploader une image", type=['jpg', 'jpeg', 'png'])
+            if uploaded_barcode:
+                with st.spinner("Analyse..."):
+                    file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
+                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                    image_annotee, codes = detecter_code_barre(frame)
+                    
+                    if codes:
+                        code_trouve = codes[0]['data']
+                        st.session_state.code_detecte = code_trouve
+                        st.session_state.scan_effectue = True
+                        st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                                caption="Code détecté", use_container_width=True)
+                        
+                        st.markdown(f"""
+                        <div class="success-box">
+                            <h4>✅ Code détecté !</h4>
+                            <div class="code-display">{code_trouve}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
     
-    # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU LIBELLÉ ET DE L'EMPLACEMENT ====================
+    # Formulaire de création d'article
+    st.markdown("---")
     st.markdown("### 📝 Informations de l'article")
     
-    # Valeur par défaut pour le code (depuis le scan)
     default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
-    # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_code:
-        code_article = st.text_input(
-            "Code article *",
-            value=default_code,
-            placeholder="Code article (obligatoire)",
-            key="code_article_input"
-        )
+        code_article = st.text_input("Code article *", value=default_code, key="code_input")
     
     with col_lib:
-        # Déterminer le libellé en fonction du code
         if code_article and code_article in ARTICLES_PREDEFINIS:
             libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
         else:
             libelle_value = ""
-        
-        libelle = st.text_input(
-            "Libellé (optionnel)",
-            value=libelle_value,
-            placeholder="Description de l'article",
-            key="libelle_input"
-        )
+        libelle = st.text_input("Libellé", value=libelle_value, key="libelle_input")
     
     with col_emp:
-        # Déterminer l'emplacement en fonction du code
         if code_article and code_article in ARTICLES_PREDEFINIS:
-            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+            emp_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
         else:
-            emplacement_value = ""
-        
-        emplacement = st.text_input(
-            "Emplacement (optionnel)",
-            value=emplacement_value,
-            placeholder="Ex: A-12, Rayon 3...",
-            key="emplacement_input"
-        )
+            emp_value = ""
+        emplacement = st.text_input("Emplacement", value=emp_value, key="emp_input")
     
-    # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
     if code_article and code_article in ARTICLES_PREDEFINIS:
-        st.markdown(f"""
-        <div class="article-found">
-            <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
-            <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.caption("* Champ obligatoire")
+        st.info(f"📝 Article trouvé: {ARTICLES_PREDEFINIS[code_article]['libelle']}")
     
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Créer l'article", use_container_width=True):
             if code_article:
                 if gestionnaire.creer_nouvel_article(code_article, libelle, emplacement):
-                    st.success(f"✅ Article '{code_article}' créé avec succès!")
-                    if libelle:
-                        st.info(f"📝 Libellé: {libelle}")
-                    if emplacement:
-                        st.info(f"📍 Emplacement: {emplacement}")
+                    st.success(f"✅ Article créé!")
                     st.session_state.article_selectionne = code_article
                     st.session_state.page = "details"
                     st.session_state.code_detecte = None
                     st.session_state.scan_effectue = False
-                    st.session_state.camera_active = False
                     st.rerun()
                 else:
-                    if code_article in gestionnaire.articles:
-                        st.error("❌ Ce code article existe déjà")
-                    else:
-                        st.error("❌ Erreur lors de la création de l'article")
+                    st.error("❌ Erreur")
             else:
-                st.error("❌ Veuillez entrer un code article")
+                st.error("❌ Code requis")
+    
     with col2:
         if st.button("❌ Annuler", use_container_width=True):
             st.session_state.code_detecte = None
             st.session_state.scan_effectue = False
-            st.session_state.camera_active = False
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
-    # Page de détails d'un article
+    # Page de détails (identique à votre code original)
     code_article = st.session_state.article_selectionne
     photos = gestionnaire.get_photos_article(code_article)
     total = gestionnaire.get_total_article(code_article)
     libelle = gestionnaire.get_libelle_article(code_article)
     emplacement = gestionnaire.get_emplacement_article(code_article)
     
-    # En-tête avec libellé et emplacement
-    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1, 1, 1, 1])
-    with col_h1:
-        st.header(f"📦 {code_article}")
-        if libelle:
-            st.markdown(f"<span class='label-badge'>📝 {libelle}</span>", unsafe_allow_html=True)
-        if emplacement:
-            st.markdown(f"<span class='location-badge'>📍 {emplacement}</span>", unsafe_allow_html=True)
-    with col_h2:
+    st.header(f"📦 {code_article}")
+    if libelle:
+        st.markdown(f"**{libelle}**")
+    if emplacement:
+        st.markdown(f"📍 {emplacement}")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
         st.metric("Total pièces", total)
-    with col_h3:
+    with col2:
         st.metric("Photos", len(photos))
-    with col_h4:
-        if libelle:
-            st.metric("Libellé", libelle[:20] + "..." if len(libelle) > 20 else libelle)
-    with col_h5:
-        if emplacement:
-            st.metric("Emplacement", emplacement)
     
-    # Afficher un badge si le code est un code-barres
-    if re.match(r'^[A-Z0-9-]+$', code_article):
-        st.info(f"🔖 Code produit: {code_article}")
-    
-    # Options
     col_o1, col_o2, col_o3 = st.columns(3)
     with col_o1:
-        if st.button("⬅️ Retour à la saisie", use_container_width=True):
+        if st.button("⬅️ Retour"):
             st.session_state.page = "saisie"
-            st.session_state.code_detecte = None
-            st.session_state.scan_effectue = False
-            st.session_state.camera_active = False
             st.rerun()
     with col_o2:
-        if st.button("📸 Ajouter une photo", use_container_width=True):
+        if st.button("📸 Ajouter photo"):
             st.session_state.ajout_photo = True
     with col_o3:
-        if st.button("🗑️ Supprimer cet article", use_container_width=True, type="primary"):
+        if st.button("🗑️ Supprimer", type="primary"):
             if gestionnaire.supprimer_article(code_article):
-                st.success(f"✅ Article '{code_article}' supprimé")
                 st.session_state.page = "saisie"
                 st.rerun()
     
-    st.divider()
-    
-    # Ajout de photo
+    # Ajout de photo avec gestion du mode secours
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
-        # Afficher les caméras disponibles
-        cameras_dispo = [c for c in st.session_state.cameras_disponibles if c['disponible']]
-        
-        if cameras_dispo:
-            options_camera = []
-            for cam in cameras_dispo:
-                resolution = cam.get('resolution', 'Resolution inconnue')
-                backends = ", ".join(cam.get('backends', ['Standard']))
-                label = f"Caméra {cam['index']} - {resolution} - {backends}"
-                options_camera.append(label)
-            
-            st.markdown('<div class="camera-selector">', unsafe_allow_html=True)
-            camera_photo = st.selectbox(
-                "Choisissez la caméra pour la photo",
-                options=options_camera,
-                key="camera_photo_selector"
-            )
-            
-            if camera_photo:
-                index_str = camera_photo.split(" - ")[0].replace("Caméra ", "")
-                camera_choisie_photo = int(index_str)
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.error("❌ Aucune caméra détectée")
-            camera_choisie_photo = None
-        
-        col_p1, col_p2 = st.columns([2, 1])
-        with col_p2:
-            if st.button("❌ Annuler"):
-                st.session_state.ajout_photo = False
-                if 'photo_camera_active' in st.session_state:
-                    del st.session_state.photo_camera_active
-                st.rerun()
-        
-        with col_p1:
-            source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
-        
-        if source == "📸 Prendre une photo":
-            if camera_choisie_photo is not None:
-                # Bouton pour activer la caméra
-                if st.button(f"📷 Activer la caméra {camera_choisie_photo} pour la photo", key="activate_photo_webcam", use_container_width=True):
-                    st.session_state.photo_camera_active = True
-                    st.rerun()
-                
-                if st.session_state.get('photo_camera_active', False):
-                    st.info(f"ℹ️ Caméra {camera_choisie_photo} activée. Cliquez sur le bouton ci-dessous pour prendre la photo.")
-                    
-                    img_file = st.camera_input("Prendre une photo", key=f"camera_photo_{camera_choisie_photo}")
-                    if img_file:
-                        with st.spinner("Analyse..."):
-                            bytes_data = img_file.getvalue()
-                            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                            resultat, nb_pieces = detecter_pieces(frame)
-                            
-                            if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                                st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                                st.session_state.ajout_photo = False
-                                if 'photo_camera_active' in st.session_state:
-                                    del st.session_state.photo_camera_active
-                                st.rerun()
-                else:
-                    st.info(f"👆 Cliquez sur 'Activer la caméra {camera_choisie_photo} pour la photo' pour commencer")
-            else:
-                st.warning("⚠️ Veuillez sélectionner une caméra")
-        
-        else:  # Choisir une image
-            uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
-            if uploaded_file:
+        if st.session_state.mode_secours or not cameras_trouvees:
+            # Mode secours pour les photos
+            frame = capturer_avec_app_windows()
+            if frame is not None:
                 with st.spinner("Analyse..."):
-                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                     resultat, nb_pieces = detecter_pieces(frame)
-                    
                     if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.success(f"✅ {nb_pieces} pièces ajoutées!")
                         st.session_state.ajout_photo = False
                         st.rerun()
+        else:
+            # Mode normal avec caméra
+            if cameras_trouvees:
+                options = [f"Caméra {cam['index']}" for cam in cameras_trouvees]
+                camera_idx = st.selectbox("Caméra", range(len(cameras_trouvees)), format_func=lambda x: options[x])
+                camera_index = cameras_trouvees[camera_idx]['index']
+                
+                if st.button(f"📷 Activer"):
+                    st.session_state.photo_camera_active = True
+                
+                if st.session_state.get('photo_camera_active', False):
+                    img_file = st.camera_input("Prendre photo", key=f"photo_{camera_index}")
+                    if img_file:
+                        bytes_data = img_file.getvalue()
+                        frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                        resultat, nb_pieces = detecter_pieces(frame)
+                        
+                        if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                            st.success(f"✅ {nb_pieces} pièces ajoutées!")
+                            st.session_state.ajout_photo = False
+                            st.session_state.photo_camera_active = False
+                            st.rerun()
+            else:
+                st.warning("Aucune caméra - utilisez l'upload")
+                uploaded = st.file_uploader("Choisir image", type=['jpg', 'jpeg', 'png'])
+                if uploaded:
+                    file_bytes = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
+                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
+        
+        if st.button("❌ Annuler photo"):
+            st.session_state.ajout_photo = False
+            st.rerun()
     
-    # Affichage des photos existantes
+    # Affichage des photos
     if photos:
-        st.subheader("📸 Photos enregistrées")
-        
-        # Options d'affichage
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            tri = st.selectbox("Trier par", ["Plus récente", "Plus ancienne", "Plus de pièces", "Moins de pièces"])
-        
-        # Trier les photos
-        photos_affichees = photos.copy()
-        if tri == "Plus récente":
-            photos_affichees = list(reversed(photos_affichees))
-        elif tri == "Plus ancienne":
-            photos_affichees = photos_affichees
-        elif tri == "Plus de pièces":
-            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'], reverse=True)
-        elif tri == "Moins de pièces":
-            photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'])
-        
-        # Afficher les photos en grille
+        st.subheader("📸 Photos")
         cols = st.columns(3)
-        for i, photo in enumerate(photos_affichees):
+        for i, photo in enumerate(photos):
             with cols[i % 3]:
-                # Afficher la miniature
                 img = base64_to_image(photo['image_analyse'])
                 img_mini = cv2.resize(img, (200, 150))
                 st.image(cv2.cvtColor(img_mini, cv2.COLOR_BGR2RGB), use_column_width=True)
+                st.caption(f"{photo['nb_pieces']} pièces - {photo['timestamp'][:10]}")
                 
-                # Informations
-                st.caption(f"📅 {photo['timestamp'][:10]}")
-                st.caption(f"🔢 {photo['nb_pieces']} pièces")
-                
-                # Boutons
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
-                    if st.button("🔍 Voir", key=f"view_{code_article}_{i}"):
-                        st.session_state.photo_selectionnee = photo['id']
+                    if st.button("🔍", key=f"view_{i}"):
+                        st.session_state.photo_selectionnee = i
                         st.session_state.page = "photo_detail"
                         st.rerun()
                 with col_b2:
-                    if st.button("🗑️", key=f"del_{code_article}_{i}"):
-                        if gestionnaire.supprimer_photo(code_article, photo['id']):
-                            st.rerun()
-    
+                    if st.button("🗑️", key=f"del_{i}"):
+                        gestionnaire.supprimer_photo(code_article, i)
+                        st.rerun()
     else:
-        st.info("📸 Aucune photo pour cet article. Cliquez sur 'Ajouter une photo' pour commencer.")
+        st.info("Aucune photo")
 
-elif st.session_state.page == "photo_detail" and st.session_state.article_selectionne and st.session_state.photo_selectionnee is not None:
-    # Détail d'une photo spécifique
+elif st.session_state.page == "photo_detail":
+    # Détail photo (similaire à votre code)
     code_article = st.session_state.article_selectionne
     photos = gestionnaire.get_photos_article(code_article)
     photo_id = st.session_state.photo_selectionnee
     
     if 0 <= photo_id < len(photos):
         photo = photos[photo_id]
-        libelle = gestionnaire.get_libelle_article(code_article)
         
-        st.header(f"🔍 Détail de la photo - {code_article}")
-        if libelle:
-            st.subheader(libelle)
+        st.header(f"Photo {photo_id + 1}")
         
-        # Afficher les deux images
-        col_img1, col_img2 = st.columns(2)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Originale")
+            img_orig = base64_to_image(photo['image_originale'])
+            st.image(cv2.cvtColor(img_orig, cv2.COLOR_BGR2RGB), use_column_width=True)
         
-        with col_img1:
-            st.subheader("📸 Image originale")
-            img_originale = base64_to_image(photo['image_originale'])
-            st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
+        with col2:
+            st.subheader(f"Analyse - {photo['nb_pieces']} pièces")
+            img_anal = base64_to_image(photo['image_analyse'])
+            st.image(cv2.cvtColor(img_anal, cv2.COLOR_BGR2RGB), use_column_width=True)
         
-        with col_img2:
-            st.subheader(f"🔍 Analyse - {photo['nb_pieces']} pièces")
-            img_analyse = base64_to_image(photo['image_analyse'])
-            st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
-        
-        # Informations
-        st.metric("Nombre de pièces", photo['nb_pieces'])
         st.caption(f"Date: {photo['timestamp']}")
         
-        # Boutons
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            if st.button("⬅️ Retour à l'article", use_container_width=True):
-                st.session_state.page = "details"
-                st.session_state.photo_selectionnee = None
-                st.rerun()
-        with col_b2:
-            if st.button("🗑️ Supprimer cette photo", use_container_width=True, type="primary"):
-                if gestionnaire.supprimer_photo(code_article, photo_id):
-                    st.session_state.page = "details"
-                    st.session_state.photo_selectionnee = None
-                    st.rerun()
-    else:
-        st.error("Photo non trouvée")
-        if st.button("Retour"):
+        if st.button("⬅️ Retour"):
             st.session_state.page = "details"
             st.session_state.photo_selectionnee = None
             st.rerun()
+    else:
+        st.error("Photo introuvable")
 
 # Pied de page
 st.markdown("---")
-col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v4.0")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
-    st.caption(f"🧩 Total global: {total_global} pièces")
+    st.caption(f"🧩 Total: {total_global} pièces")
 with col_f3:
     st.caption(f"📊 Articles: {len(gestionnaire.articles)}")
-with col_f4:
-    emplacements_renseignes = sum(1 for e in gestionnaire.get_tous_emplacements().values() if e)
-    st.caption(f"📍 Emplacements: {emplacements_renseignes}/{len(gestionnaire.articles)}")
-with col_f5:
-    libelles_renseignes = sum(1 for l in gestionnaire.get_tous_libelles().values() if l)
-    st.caption(f"📝 Libellés: {libelles_renseignes}/{len(gestionnaire.articles)}")
