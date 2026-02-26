@@ -11,17 +11,6 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
-import platform
-import time
-import os
-import tempfile
-
-# ==================== CONFIGURATION DE LA PAGE ====================
-st.set_page_config(
-    page_title="Gestionnaire d'Inventaire Multi-Pièces",
-    page_icon="📦",
-    layout="wide"
-)
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -48,58 +37,12 @@ ARTICLES_PREDEFINIS = {
 }
 # =====================================================================================================
 
-# ==================== DIAGNOSTIC DE LA WEBCAM ====================
-def diagnostiquer_webcam():
-    """Fonction de diagnostic pour identifier les problèmes de webcam"""
-    st.sidebar.header("🔧 Diagnostic Webcam")
-    
-    # Informations système
-    st.sidebar.write(f"Système: {platform.system()} {platform.release()}")
-    st.sidebar.write(f"Python: {platform.python_version()}")
-    st.sidebar.write(f"OpenCV: {cv2.__version__}")
-    
-    # Test avec différents backends
-    backends = [
-        (cv2.CAP_ANY, "CAP_ANY (Auto)"),
-        (cv2.CAP_DSHOW, "CAP_DSHOW (Windows)"),
-        (cv2.CAP_MSMF, "CAP_MSMF (Windows Media)"),
-        (cv2.CAP_V4L2, "CAP_V4L2 (Linux)"),
-        (cv2.CAP_FFMPEG, "CAP_FFMPEG"),
-    ]
-    
-    webcam_disponible = False
-    
-    for backend, nom in backends:
-        try:
-            st.sidebar.write(f"Test avec {nom}...")
-            cap = cv2.VideoCapture(0, backend)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    st.sidebar.success(f"✅ {nom} fonctionne!")
-                    webcam_disponible = True
-                else:
-                    st.sidebar.warning(f"⚠️ {nom} ouvert mais pas d'image")
-                cap.release()
-            else:
-                st.sidebar.error(f"❌ {nom} non disponible")
-        except Exception as e:
-            st.sidebar.error(f"❌ {nom}: {str(e)[:50]}")
-    
-    if not webcam_disponible:
-        st.sidebar.warning("""
-        💡 Solutions possibles :
-        1. Vérifiez qu'aucune autre application n'utilise la webcam
-        2. Sur Windows, essayez d'utiliser 'CAP_DSHOW'
-        3. Redémarrez l'application
-        4. Vérifiez les permissions de la webcam
-        """)
-    
-    return webcam_disponible
-
-# Exécuter le diagnostic
-WEBCAM_DISPONIBLE = diagnostiquer_webcam()
-# =================================================================
+# Configuration de la page
+st.set_page_config(
+    page_title="Gestionnaire d'Inventaire Multi-Pièces",
+    page_icon="📦",
+    layout="wide"
+)
 
 # CSS personnalisé
 st.markdown("""
@@ -159,21 +102,6 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
-    }
-    .camera-box {
-        border: 2px dashed #667eea;
-        border-radius: 10px;
-        padding: 20px;
-        text-align: center;
-        background: #f8f9fa;
-    }
-    .warning-box {
-        background: #fff3cd;
-        color: #856404;
-        padding: 1rem;
-        border-radius: 5px;
-        border-left: 5px solid #ffc107;
-        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -466,124 +394,6 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
-# Fonction améliorée pour capturer avec la webcam
-def capture_avec_webcam():
-    """Fonction améliorée pour capturer une image avec la webcam"""
-    
-    # Interface Streamlit pour la capture
-    st.markdown('<div class="camera-box">', unsafe_allow_html=True)
-    st.markdown("### 📸 Capture avec la webcam")
-    
-    if not WEBCAM_DISPONIBLE:
-        st.markdown("""
-        <div class="warning-box">
-            <strong>⚠️ Attention :</strong> La webcam n'a pas été détectée correctement.<br>
-            Voici quelques solutions :
-            <ul>
-                <li>Vérifiez que la webcam est branchée</li>
-                <li>Fermez les autres applications qui utilisent la webcam</li>
-                <li>Autorisez l'accès à la webcam dans votre navigateur</li>
-                <li>Utilisez l'option "Upload" à la place</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Options de capture
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        methode = st.radio(
-            "Méthode de capture",
-            ["📱 Interface Streamlit", "📷 OpenCV Direct", "📂 Upload"],
-            key="methode_capture"
-        )
-    
-    with col2:
-        if methode == "📷 OpenCV Direct":
-            backend_choice = st.selectbox(
-                "Backend OpenCV",
-                ["Auto", "DSHOW (Windows)", "V4L2 (Linux)", "MSMF"]
-            )
-    
-    # Méthode 1: Interface Streamlit (recommandée)
-    if methode == "📱 Interface Streamlit":
-        st.info("ℹ️ Utilisez le bouton ci-dessous pour prendre une photo")
-        img_file = st.camera_input("Prendre une photo", key="streamlit_camera")
-        
-        if img_file is not None:
-            # Convertir l'image Streamlit en format OpenCV
-            bytes_data = img_file.getvalue()
-            frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-            st.success("✅ Photo prise avec succès!")
-            return frame
-    
-    # Méthode 2: OpenCV direct
-    elif methode == "📷 OpenCV Direct":
-        st.warning("⚠️ Méthode alternative - peut nécessiter des ajustements")
-        
-        # Déterminer le backend
-        backend_map = {
-            "Auto": cv2.CAP_ANY,
-            "DSHOW (Windows)": cv2.CAP_DSHOW,
-            "V4L2 (Linux)": cv2.CAP_V4L2,
-            "MSMF": cv2.CAP_MSMF
-        }
-        backend = backend_map.get(backend_choice, cv2.CAP_ANY)
-        
-        if st.button("📸 Capturer avec OpenCV", use_container_width=True):
-            with st.spinner("Tentative de capture..."):
-                try:
-                    # Essayer d'ouvrir la caméra
-                    cap = cv2.VideoCapture(0, backend)
-                    
-                    if not cap.isOpened():
-                        st.error("❌ Impossible d'ouvrir la caméra")
-                        return None
-                    
-                    # Laisser le temps à la caméra de s'initialiser
-                    time.sleep(1)
-                    
-                    # Capture multiple pour stabiliser
-                    for _ in range(5):
-                        ret, frame = cap.read()
-                        time.sleep(0.1)
-                    
-                    if ret and frame is not None:
-                        st.success("✅ Capture réussie!")
-                        cap.release()
-                        
-                        # Afficher un aperçu
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        st.image(frame_rgb, caption="Aperçu", use_container_width=True)
-                        
-                        return frame
-                    else:
-                        st.error("❌ Échec de la capture")
-                        cap.release()
-                        return None
-                        
-                except Exception as e:
-                    st.error(f"❌ Erreur: {str(e)}")
-                    return None
-    
-    # Méthode 3: Upload
-    else:
-        st.info("ℹ️ Choisissez une image depuis votre ordinateur")
-        uploaded_file = st.file_uploader(
-            "Sélectionner une image",
-            type=['jpg', 'jpeg', 'png'],
-            key="upload_camera"
-        )
-        
-        if uploaded_file is not None:
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            st.success("✅ Image chargée avec succès!")
-            return frame
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    return None
-
 # Initialisation
 if 'gestionnaire' not in st.session_state:
     st.session_state.gestionnaire = GestionnairePieces()
@@ -597,8 +407,6 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
-if 'camera_active' not in st.session_state:
-    st.session_state.camera_active = False
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -697,13 +505,14 @@ if st.session_state.page == "saisie":
         scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
     
     if scan_option == "📸 Caméra":
-        # Utiliser la fonction améliorée de capture
-        frame_barcode = capture_avec_webcam()
-        
-        if frame_barcode is not None:
+        img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
+        if img_barcode:
             with st.spinner("🔍 Analyse du code-barres..."):
+                bytes_data = img_barcode.getvalue()
+                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                
                 # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame_barcode)
+                image_annotee, codes = detecter_code_barre(frame)
                 
                 if codes:
                     # Prendre le premier code détecté
@@ -910,17 +719,34 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                 st.session_state.ajout_photo = False
                 st.rerun()
         
-        # Utiliser la fonction améliorée de capture
-        frame = capture_avec_webcam()
+        with col_p1:
+            source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
         
-        if frame is not None:
-            with st.spinner("Analyse des pièces..."):
-                resultat, nb_pieces = detecter_pieces(frame)
-                
-                if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                    st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                    st.session_state.ajout_photo = False
-                    st.rerun()
+        if source == "📸 Prendre une photo":
+            img_file = st.camera_input("Prendre une photo")
+            if img_file:
+                with st.spinner("Analyse..."):
+                    bytes_data = img_file.getvalue()
+                    frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
+        
+        else:  # Choisir une image
+            uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
+            if uploaded_file:
+                with st.spinner("Analyse..."):
+                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
     
     # Affichage des photos existantes
     if photos:
