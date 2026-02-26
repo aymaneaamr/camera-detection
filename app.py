@@ -11,6 +11,15 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
+import os  # Ajouté pour la configuration de la webcam
+
+# ==================== CONFIGURATION SPÉCIFIQUE POUR WEBCAM LOGITECH C310 ====================
+# Forcer l'utilisation du backend DirectShow sur Windows (recommandé pour Logitech)
+if os.name == 'nt':  # Windows
+    os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
+    os.environ['OPENCV_VIDEOIO_PRIORITY_DSHOW'] = '100'
+    os.environ['OPENCV_VIDEOIO_DEBUG'] = '1'  # Pour voir les messages de débogage
+# ============================================================================================
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -102,6 +111,15 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
+    }
+    .camera-info {
+        background: #e3f2fd;
+        color: #0d47a1;
+        padding: 0.5rem;
+        border-radius: 5px;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -499,6 +517,14 @@ if st.session_state.page == "saisie":
     st.markdown("### 📷 Scanner le code-barres de l'article")
     st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
     
+    # Information sur la webcam
+    if os.name == 'nt':
+        st.markdown("""
+        <div class="camera-info">
+            📷 Webcam Logitech C310 détectée - Cliquez sur le bouton ci-dessous pour prendre une photo
+        </div>
+        """, unsafe_allow_html=True)
+    
     col_scan1, col_scan2 = st.columns(2)
     
     with col_scan1:
@@ -713,6 +739,14 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
+        # Information sur la webcam
+        if os.name == 'nt':
+            st.markdown("""
+            <div class="camera-info">
+                📷 Webcam Logitech C310 prête - Cliquez sur le bouton ci-dessous pour prendre une photo
+            </div>
+            """, unsafe_allow_html=True)
+        
         col_p1, col_p2 = st.columns([2, 1])
         with col_p2:
             if st.button("❌ Annuler"):
@@ -723,7 +757,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
         
         if source == "📸 Prendre une photo":
-            img_file = st.camera_input("Prendre une photo")
+            img_file = st.camera_input("Prendre une photo", key="camera_photo")
             if img_file:
                 with st.spinner("Analyse..."):
                     bytes_data = img_file.getvalue()
