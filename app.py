@@ -11,9 +11,6 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
-import os
-import subprocess
-import time
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -105,29 +102,6 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
-    }
-    .camera-box {
-        background: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 2px solid #667eea;
-        margin: 1rem 0;
-        text-align: center;
-    }
-    .camera-button {
-        background: #28a745;
-        color: white;
-        padding: 0.8rem 1.5rem;
-        border-radius: 5px;
-        font-size: 1.2rem;
-        font-weight: bold;
-        text-align: center;
-        margin: 1rem 0;
-        cursor: pointer;
-        border: none;
-    }
-    .camera-button:hover {
-        background: #218838;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -520,58 +494,76 @@ if st.session_state.page == "saisie":
     # Page de saisie d'un nouvel article avec scan de code-barres
     st.header("➕ Ajouter un nouvel article")
     
-    # Section scan de code-barres avec ouverture de l'application Camera Windows
-    st.markdown("### 📷 Scanner le code-barres")
+    # Section scan de code-barres
+    st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
+    st.markdown("### 📷 Scanner le code-barres de l'article")
+    st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
     
-    # Boîte d'information pour la caméra
-    st.markdown("""
-    <div class="camera-box">
-        <h4>📸 Utilisation de votre webcam Logitech C310</h4>
-        <p>Cliquez sur le bouton ci-dessous pour ouvrir l'application Camera Windows et prendre une photo du code-barres.</p>
-        <p>La photo sera automatiquement sauvegardée dans votre dossier Images.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    col_scan1, col_scan2 = st.columns(2)
     
-    # Bouton pour ouvrir l'application Camera Windows
-    if st.button("📸 Ouvrir l'application Camera Windows", key="open_camera_barcode", use_container_width=True):
-        try:
-            # Commande pour ouvrir l'application Camera sur Windows
-            subprocess.Popen('start microsoft.windows.camera:', shell=True)
-            st.success("✅ Application Camera ouverte ! Prenez votre photo, puis revenez ici pour l'uploader.")
-        except Exception as e:
-            st.error(f"❌ Erreur lors de l'ouverture de la caméra: {e}")
+    with col_scan1:
+        scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
     
-    st.markdown("---")
-    st.markdown("### 📤 Uploader la photo du code-barres")
-    
-    # Upload de l'image du code-barres
-    uploaded_barcode = st.file_uploader("Choisir l'image du code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
-    if uploaded_barcode:
-        with st.spinner("🔍 Analyse du code-barres..."):
-            file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
-            frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            
-            # Détection du code-barres
-            image_annotee, codes = detecter_code_barre(frame)
-            
-            # Afficher l'image
-            st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                    caption="Image analysée", use_container_width=True)
-            
-            if codes:
-                code_trouve = codes[0]['data']
-                st.session_state.code_detecte = code_trouve
-                st.session_state.scan_effectue = True
+    if scan_option == "📸 Caméra":
+        img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
+        if img_barcode:
+            with st.spinner("🔍 Analyse du code-barres..."):
+                bytes_data = img_barcode.getvalue()
+                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 
-                st.markdown(f"""
-                <div class="success-box">
-                    <h4>✅ Code-barres détecté !</h4>
-                    <div class="code-display">{code_trouve}</div>
-                    <p><strong>Type :</strong> {codes[0]['type']}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+                # Détection du code-barres
+                image_annotee, codes = detecter_code_barre(frame)
+                
+                if codes:
+                    # Prendre le premier code détecté
+                    code_trouve = codes[0]['data']
+                    st.session_state.code_detecte = code_trouve
+                    st.session_state.scan_effectue = True
+                    
+                    # Afficher l'image avec le code détecté
+                    st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                            caption="Code-barres détecté", use_container_width=True)
+                    
+                    st.markdown(f"""
+                    <div class="success-box">
+                        <h4>✅ Code-barres détecté !</h4>
+                        <div class="code-display">{code_trouve}</div>
+                        <p><strong>Type :</strong> {codes[0]['type']}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+    
+    else:  # Upload
+        uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
+        if uploaded_barcode:
+            with st.spinner("🔍 Analyse du code-barres..."):
+                file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
+                frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                
+                # Détection du code-barres
+                image_annotee, codes = detecter_code_barre(frame)
+                
+                # Afficher l'image
+                st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
+                        caption="Image analysée", use_container_width=True)
+                
+                if codes:
+                    code_trouve = codes[0]['data']
+                    st.session_state.code_detecte = code_trouve
+                    st.session_state.scan_effectue = True
+                    
+                    st.markdown(f"""
+                    <div class="success-box">
+                        <h4>✅ Code-barres détecté !</h4>
+                        <div class="code-display">{code_trouve}</div>
+                        <p><strong>Type :</strong> {codes[0]['type']}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Bouton pour réinitialiser le scan
     if st.session_state.scan_effectue:
@@ -721,44 +713,40 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
-        # Boîte d'information pour la caméra
-        st.markdown("""
-        <div class="camera-box">
-            <h4>📸 Prendre une photo des pièces</h4>
-            <p>Cliquez sur le bouton ci-dessous pour ouvrir l'application Camera Windows.</p>
-            <p>Prenez une photo des pièces à compter, puis uploadez-la.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Bouton pour ouvrir l'application Camera Windows
-        if st.button("📸 Ouvrir l'application Camera Windows", key="open_camera_photo", use_container_width=True):
-            try:
-                subprocess.Popen('start microsoft.windows.camera:', shell=True)
-                st.success("✅ Application Camera ouverte ! Prenez votre photo, puis revenez.")
-            except Exception as e:
-                st.error(f"❌ Erreur: {e}")
-        
-        st.markdown("### 📤 Uploader la photo")
-        
-        # Upload de la photo
-        uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'], key="upload_photo")
-        if uploaded_file:
-            with st.spinner("Analyse des pièces..."):
-                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-                frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                resultat, nb_pieces = detecter_pieces(frame)
-                
-                if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                    st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                    st.session_state.ajout_photo = False
-                    st.rerun()
-        
-        # Bouton pour annuler
-        col_p1, col_p2, col_p3 = st.columns(3)
+        col_p1, col_p2 = st.columns([2, 1])
         with col_p2:
-            if st.button("❌ Annuler", use_container_width=True):
+            if st.button("❌ Annuler"):
                 st.session_state.ajout_photo = False
                 st.rerun()
+        
+        with col_p1:
+            source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
+        
+        if source == "📸 Prendre une photo":
+            img_file = st.camera_input("Prendre une photo")
+            if img_file:
+                with st.spinner("Analyse..."):
+                    bytes_data = img_file.getvalue()
+                    frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
+        
+        else:  # Choisir une image
+            uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
+            if uploaded_file:
+                with st.spinner("Analyse..."):
+                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                    resultat, nb_pieces = detecter_pieces(frame)
+                    
+                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                        st.session_state.ajout_photo = False
+                        st.rerun()
     
     # Affichage des photos existantes
     if photos:
