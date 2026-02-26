@@ -103,6 +103,27 @@ st.markdown("""
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
     }
+    .camera-test {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 5px;
+        border: 1px solid #dee2e6;
+        margin: 0.5rem 0;
+    }
+    .camera-available {
+        background: #d4edda;
+        color: #155724;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border-left: 5px solid #28a745;
+    }
+    .camera-unavailable {
+        background: #f8d7da;
+        color: #721c24;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border-left: 5px solid #dc3545;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -394,14 +415,50 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
+# Fonction pour tester tous les index de caméra disponibles
+def tester_cameras_disponibles(max_index=10):
+    """Teste tous les index de caméra de 0 à max_index et retourne la liste des index disponibles"""
+    index_disponibles = []
+    
+    for i in range(max_index + 1):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            # Tester si on peut lire une image
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                index_disponibles.append(i)
+            cap.release()
+    
+    return index_disponibles
+
 # Fonction pour ouvrir la caméra avec un index spécifique
-def open_camera_with_index(camera_index=2):
+def open_camera_with_index(camera_index):
     """Ouvre la caméra avec l'index spécifié"""
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
-        st.error(f"❌ Impossible d'ouvrir la caméra avec l'index {camera_index}")
         return None
+    
+    # Vérifier qu'on peut lire une image
+    ret, frame = cap.read()
+    if not ret or frame is None:
+        cap.release()
+        return None
+    
     return cap
+
+# Fonction pour capturer une image avec la caméra
+def capturer_image_camera(camera_index):
+    """Capture une image avec la caméra à l'index spécifié"""
+    cap = open_camera_with_index(camera_index)
+    if cap is None:
+        return None
+    
+    ret, frame = cap.read()
+    cap.release()
+    
+    if ret and frame is not None:
+        return frame
+    return None
 
 # Initialisation
 if 'gestionnaire' not in st.session_state:
@@ -416,8 +473,11 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'cameras_disponibles' not in st.session_state:
+    st.session_state.cameras_disponibles = tester_cameras_disponibles(10)
 if 'camera_index' not in st.session_state:
-    st.session_state.camera_index = 2  # Index par défaut
+    # Choisir le premier index disponible par défaut, ou 0 si aucun
+    st.session_state.camera_index = st.session_state.cameras_disponibles[0] if st.session_state.cameras_disponibles else 0
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -505,40 +565,66 @@ if st.session_state.page == "saisie":
     # Page de saisie d'un nouvel article avec scan de code-barres
     st.header("➕ Ajouter un nouvel article")
     
-    # Ajout d'une option pour choisir l'index de la caméra
-    with st.expander("⚙️ Paramètres de la caméra"):
-        col_cam1, col_cam2 = st.columns(2)
-        with col_cam1:
-            camera_index = st.number_input(
-                "Index de la caméra",
-                min_value=0,
-                max_value=10,
-                value=st.session_state.camera_index,
-                step=1,
-                help="0 = caméra par défaut, 1 = première caméra externe, 2 = deuxième caméra externe, etc."
-            )
-            if camera_index != st.session_state.camera_index:
-                st.session_state.camera_index = camera_index
-                st.success(f"✅ Index de caméra changé pour {camera_index}")
+    # Section de détection des caméras
+    st.markdown("### 📷 Configuration de la caméra")
+    
+    # Bouton pour détecter les caméras disponibles
+    col_cam1, col_cam2 = st.columns([1, 3])
+    with col_cam1:
+        if st.button("🔍 Détecter les caméras", use_container_width=True):
+            with st.spinner("Recherche des caméras disponibles..."):
+                st.session_state.cameras_disponibles = tester_cameras_disponibles(10)
+                if st.session_state.cameras_disponibles:
+                    st.session_state.camera_index = st.session_state.cameras_disponibles[0]
+                st.rerun()
+    
+    with col_cam2:
+        # Afficher le statut des caméras
+        if st.session_state.cameras_disponibles:
+            st.markdown(f"<div class='camera-available'>✅ {len(st.session_state.cameras_disponibles)} caméra(s) disponible(s): {st.session_state.cameras_disponibles}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='camera-unavailable'>❌ Aucune caméra détectée</div>", unsafe_allow_html=True)
+    
+    # Sélection de la caméra
+    if st.session_state.cameras_disponibles:
+        st.markdown("#### Sélectionnez la caméra à utiliser :")
         
-        with col_cam2:
-            if st.button("🔍 Tester la caméra"):
-                cap = open_camera_with_index(st.session_state.camera_index)
-                if cap is not None:
-                    ret, frame = cap.read()
-                    cap.release()
-                    if ret:
-                        st.success(f"✅ Caméra avec index {st.session_state.camera_index} fonctionnelle")
-                        st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Test de la caméra", width=300)
-                    else:
-                        st.error(f"❌ Impossible de capturer une image avec l'index {st.session_state.camera_index}")
+        # Créer des boutons radio pour chaque caméra disponible
+        camera_options = {f"Caméra {idx}": idx for idx in st.session_state.cameras_disponibles}
+        
+        selected_camera = st.radio(
+            "Caméras disponibles",
+            options=list(camera_options.keys()),
+            index=list(camera_options.values()).index(st.session_state.camera_index) if st.session_state.camera_index in camera_options.values() else 0,
+            horizontal=True
+        )
+        
+        st.session_state.camera_index = camera_options[selected_camera]
+        
+        st.markdown(f"<div class='camera-test'>🎥 Caméra sélectionnée : <strong>{selected_camera} (index {st.session_state.camera_index})</strong></div>", unsafe_allow_html=True)
+        
+        # Tester la caméra sélectionnée
+        col_test1, col_test2 = st.columns([1, 3])
+        with col_test1:
+            if st.button("📸 Tester la caméra", use_container_width=True):
+                frame = capturer_image_camera(st.session_state.camera_index)
+                if frame is not None:
+                    st.success(f"✅ Caméra {selected_camera} fonctionnelle")
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    st.image(frame_rgb, caption=f"Test de {selected_camera}", width=300)
                 else:
-                    st.error(f"❌ Caméra avec index {st.session_state.camera_index} non disponible")
+                    st.error(f"❌ Impossible de capturer une image avec {selected_camera}")
+        
+        st.markdown("---")
     
     # Section scan de code-barres
     st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
     st.markdown("### 📷 Scanner le code-barres de l'article")
-    st.markdown(f"Utilisation de la caméra avec l'index **{st.session_state.camera_index}**")
+    
+    if st.session_state.cameras_disponibles:
+        st.markdown(f"Utilisation de la caméra : **{selected_camera}**")
+    else:
+        st.warning("⚠️ Aucune caméra disponible. Utilisez l'option 'Upload' pour charger une image.")
     
     col_scan1, col_scan2 = st.columns(2)
     
@@ -546,24 +632,19 @@ if st.session_state.page == "saisie":
         scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
     
     if scan_option == "📸 Caméra":
-        # Utilisation de la caméra avec l'index spécifié
-        cap = open_camera_with_index(st.session_state.camera_index)
-        if cap is not None:
-            ret, frame = cap.read()
-            cap.release()
-            
-            if ret:
-                # Convertir le frame pour l'affichage
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # Afficher l'image de la caméra
-                st.image(frame_rgb, caption=f"Aperçu de la caméra (index {st.session_state.camera_index})", use_column_width=True)
-                
-                # Bouton pour capturer
-                if st.button("📸 Capturer le code-barres"):
-                    with st.spinner("🔍 Analyse du code-barres..."):
+        if st.session_state.cameras_disponibles:
+            # Utilisation de la caméra avec l'index sélectionné
+            if st.button("📸 Capturer avec la caméra", use_container_width=True):
+                with st.spinner("Capture en cours..."):
+                    frame = capturer_image_camera(st.session_state.camera_index)
+                    
+                    if frame is not None:
                         # Détection du code-barres
                         image_annotee, codes = detecter_code_barre(frame)
+                        
+                        # Afficher l'image capturée
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        st.image(frame_rgb, caption=f"Image capturée avec {selected_camera}", use_column_width=True)
                         
                         if codes:
                             # Prendre le premier code détecté
@@ -584,10 +665,10 @@ if st.session_state.page == "saisie":
                             """, unsafe_allow_html=True)
                         else:
                             st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-            else:
-                st.error(f"❌ Impossible de capturer une image avec la caméra (index {st.session_state.camera_index})")
+                    else:
+                        st.error(f"❌ Impossible de capturer une image avec {selected_camera}")
         else:
-            st.error(f"❌ Caméra avec index {st.session_state.camera_index} non disponible")
+            st.error("❌ Aucune caméra disponible. Veuillez utiliser l'option 'Upload'.")
     
     else:  # Upload
         uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
@@ -778,29 +859,38 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
         
         if source == "📸 Prendre une photo":
-            # Utilisation de la caméra avec l'index spécifié pour les photos
-            cap = open_camera_with_index(st.session_state.camera_index)
-            if cap is not None:
-                ret, frame = cap.read()
-                cap.release()
+            if st.session_state.cameras_disponibles:
+                # Afficher la caméra sélectionnée
+                st.markdown(f"Caméra utilisée : **Caméra {st.session_state.camera_index}**")
                 
-                if ret:
-                    # Afficher l'aperçu
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    st.image(frame_rgb, caption=f"Aperçu (caméra index {st.session_state.camera_index})", use_column_width=True)
-                    
-                    if st.button("📸 Prendre la photo"):
-                        with st.spinner("Analyse..."):
-                            resultat, nb_pieces = detecter_pieces(frame)
+                # Bouton pour capturer
+                if st.button("📸 Prendre la photo", use_container_width=True):
+                    with st.spinner("Capture en cours..."):
+                        frame = capturer_image_camera(st.session_state.camera_index)
+                        
+                        if frame is not None:
+                            # Afficher l'aperçu
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            st.image(frame_rgb, caption="Image capturée", use_column_width=True)
                             
-                            if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                                st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                                st.session_state.ajout_photo = False
-                                st.rerun()
-                else:
-                    st.error(f"❌ Impossible de capturer une image avec la caméra (index {st.session_state.camera_index})")
+                            # Analyser l'image
+                            with st.spinner("Analyse des pièces..."):
+                                resultat, nb_pieces = detecter_pieces(frame)
+                                
+                                # Afficher le résultat
+                                st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), 
+                                        caption=f"Analyse - {nb_pieces} pièces détectées", use_column_width=True)
+                                
+                                # Sauvegarder
+                                if st.button("✅ Confirmer et ajouter", use_container_width=True):
+                                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                                        st.session_state.ajout_photo = False
+                                        st.rerun()
+                        else:
+                            st.error(f"❌ Impossible de capturer une image avec la caméra {st.session_state.camera_index}")
             else:
-                st.error(f"❌ Caméra avec index {st.session_state.camera_index} non disponible")
+                st.error("❌ Aucune caméra disponible. Veuillez utiliser l'option 'Choisir une image'.")
         
         else:  # Choisir une image
             uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
@@ -810,10 +900,18 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                     frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                     resultat, nb_pieces = detecter_pieces(frame)
                     
-                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                        st.session_state.ajout_photo = False
-                        st.rerun()
+                    # Afficher les images
+                    col_img1, col_img2 = st.columns(2)
+                    with col_img1:
+                        st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Image originale", use_column_width=True)
+                    with col_img2:
+                        st.image(cv2.cvtColor(resultat, cv2.COLOR_BGR2RGB), caption=f"Analyse - {nb_pieces} pièces", use_column_width=True)
+                    
+                    if st.button("✅ Confirmer et ajouter", use_container_width=True):
+                        if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
+                            st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                            st.session_state.ajout_photo = False
+                            st.rerun()
     
     # Affichage des photos existantes
     if photos:
