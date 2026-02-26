@@ -2,17 +2,17 @@ import streamlit as st
 import cv2
 import numpy as np
 from collections import defaultdict
-import pandas as pd
 from datetime import datetime
-import json
 import base64
 from io import BytesIO
 import openpyxl
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.styles import Font, Alignment, PatternFill
 from pyzbar.pyzbar import decode
 import re
 import time
 from threading import Thread
+import platform
+import subprocess
 
 # ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
 ARTICLES_PREDEFINIS = {
@@ -119,19 +119,32 @@ st.markdown("""
         border-left: 5px solid #28a745;
         margin: 10px 0;
     }
+    .diagnostic-box {
+        background: #fff3cd;
+        color: #856404;
+        padding: 15px;
+        border-radius: 5px;
+        border-left: 5px solid #ffc107;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==================== CLASSE POUR LA WEBCAM EN DIRECT ====================
 class WebcamStream:
-    def __init__(self, camera_id=2):
+    def __init__(self, camera_id=0, backend=cv2.CAP_DSHOW):
         self.camera_id = camera_id
+        self.backend = backend
         self.cap = None
         self.running = False
         self.frame = None
         self.nb_pieces = 0
         self.stats_couleur = defaultdict(int)
         self.stats_taille = defaultdict(int)
+        self.fps = 0
+        self.frame_count = 0
+        self.last_time = time.time()
+        
         self.couleurs = {
             'rouge': {
                 'lower1': np.array([0, 100, 100]), 'upper1': np.array([10, 255, 255]),
@@ -158,7 +171,7 @@ class WebcamStream:
             'G': (2000, 5000),
             'TG': (5000, float('inf'))
         }
-        
+    
     def get_couleur_piece(self, hsv, contour):
         """Détermine la couleur d'une pièce"""
         mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
@@ -251,36 +264,72 @@ class WebcamStream:
         cv2.putText(resultat, f"Tailles: P:{stats_taille_actuelles.get('P',0)} M:{stats_taille_actuelles.get('M',0)} G:{stats_taille_actuelles.get('G',0)} TG:{stats_taille_actuelles.get('TG',0)}", 
                    (10, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
+        # FPS
+        self.frame_count += 1
+        current_time = time.time()
+        if current_time - self.last_time >= 1.0:
+            self.fps = self.frame_count
+            self.frame_count = 0
+            self.last_time = current_time
+        
+        cv2.putText(resultat, f"FPS: {self.fps}", (w-100, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        
         return resultat, nb_pieces, stats_couleur_actuelles, stats_taille_actuelles
     
     def start(self):
-        """Démarre le flux webcam"""
-        self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
-        if not self.cap.isOpened():
-            return False
+        """Démarre le flux webcam avec différents backends"""
+        backends_to_try = [
+            (self.backend, "Backend spécifié"),
+            (cv2.CAP_DSHOW, "DirectShow"),
+            (cv2.CAP_MSMF, "Media Foundation"),
+            (cv2.CAP_ANY, "Auto"),
+        ]
         
-        # Configuration
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        for backend, backend_name in backends_to_try:
+            try:
+                self.cap = cv2.VideoCapture(self.camera_id, backend)
+                if self.cap.isOpened():
+                    # Tester la capture
+                    ret, test_frame = self.cap.read()
+                    if ret and test_frame is not None:
+                        print(f"✅ Caméra {self.camera_id} ouverte avec {backend_name}")
+                        
+                        # Configuration
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        self.cap.set(cv2.CAP_PROP_FPS, 30)
+                        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        
+                        self.running = True
+                        self.thread = Thread(target=self._update)
+                        self.thread.daemon = True
+                        self.thread.start()
+                        return True
+                    else:
+                        self.cap.release()
+            except Exception as e:
+                print(f"Erreur avec backend {backend_name}: {e}")
+                continue
         
-        self.running = True
-        self.thread = Thread(target=self._update)
-        self.thread.daemon = True
-        self.thread.start()
-        return True
+        return False
     
     def _update(self):
         """Met à jour la frame en continu"""
         while self.running:
-            ret, frame = self.cap.read()
-            if ret:
-                # Traiter la frame
-                resultat, nb_pieces, stats_couleur, stats_taille = self.detecter_pieces_live(frame)
-                self.frame = resultat
-                self.nb_pieces = nb_pieces
-                self.stats_couleur = stats_couleur
-                self.stats_taille = stats_taille
-            time.sleep(0.03)  # ~30 FPS
+            try:
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    # Traiter la frame
+                    resultat, nb_pieces, stats_couleur, stats_taille = self.detecter_pieces_live(frame)
+                    self.frame = resultat
+                    self.nb_pieces = nb_pieces
+                    self.stats_couleur = stats_couleur
+                    self.stats_taille = stats_taille
+                time.sleep(0.03)  # ~30 FPS
+            except Exception as e:
+                print(f"Erreur dans _update: {e}")
+                time.sleep(0.1)
     
     def read(self):
         """Lit la dernière frame traitée"""
@@ -293,6 +342,146 @@ class WebcamStream:
             self.thread.join(timeout=1.0)
         if self.cap:
             self.cap.release()
+
+# ==================== FONCTIONS DE DIAGNOSTIC ====================
+def get_system_info():
+    """Récupère les informations système"""
+    info = {
+        "os": platform.system(),
+        "os_version": platform.version(),
+        "python_version": platform.python_version(),
+        "opencv_version": cv2.__version__,
+        "processor": platform.processor(),
+        "machine": platform.machine()
+    }
+    return info
+
+def test_single_camera(index, backend):
+    """Teste une caméra spécifique avec un backend donné"""
+    try:
+        cap = cv2.VideoCapture(index, backend)
+        if cap.isOpened():
+            # Obtenir les propriétés
+            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            
+            # Lire une frame
+            ret, frame = cap.read()
+            cap.release()
+            
+            if ret and frame is not None:
+                return {
+                    "success": True,
+                    "width": int(width),
+                    "height": int(height),
+                    "fps": fps,
+                    "frame_shape": frame.shape
+                }
+            else:
+                return {"success": False, "error": "Pas de flux vidéo"}
+        else:
+            return {"success": False, "error": "Non disponible"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def diagnostic_cameras():
+    """Outil de diagnostic complet des caméras"""
+    with st.expander("🔧 Diagnostic des caméras", expanded=False):
+        st.markdown('<div class="diagnostic-box">', unsafe_allow_html=True)
+        
+        # Informations système
+        sys_info = get_system_info()
+        st.write("### 💻 Informations système")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write(f"**OS:** {sys_info['os']}")
+            st.write(f"**Python:** {sys_info['python_version']}")
+        with col2:
+            st.write(f"**OpenCV:** {sys_info['opencv_version']}")
+            st.write(f"**Machine:** {sys_info['machine']}")
+        with col3:
+            st.write("**Backends disponibles:**")
+            st.write("- CAP_DSHOW (DirectShow)")
+            st.write("- CAP_MSMF (Media Foundation)")
+            st.write("- CAP_ANY (Auto)")
+        
+        st.divider()
+        
+        # Test automatique
+        st.write("### 🔍 Scan automatique des caméras")
+        
+        if st.button("🔍 Lancer le diagnostic complet", use_container_width=True):
+            with st.spinner("Scan des caméras en cours..."):
+                results = []
+                backends = [
+                    (cv2.CAP_DSHOW, "DirectShow"),
+                    (cv2.CAP_MSMF, "Media Foundation"),
+                    (cv2.CAP_ANY, "Auto"),
+                ]
+                
+                for backend, backend_name in backends:
+                    st.write(f"**Test avec {backend_name}:**")
+                    cols = st.columns(5)
+                    for i in range(5):
+                        result = test_single_camera(i, backend)
+                        with cols[i]:
+                            if result["success"]:
+                                st.success(f"✅ Caméra {i}")
+                                st.caption(f"{result['width']}x{result['height']}")
+                            else:
+                                st.error(f"❌ Caméra {i}")
+        
+        # Test manuel
+        st.write("### 🎯 Test manuel")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            test_index = st.number_input("Index à tester", min_value=0, max_value=10, value=0)
+        with col2:
+            test_backend = st.selectbox(
+                "Backend",
+                ["DirectShow", "Media Foundation", "Auto"],
+                index=0
+            )
+            backend_map = {
+                "DirectShow": cv2.CAP_DSHOW,
+                "Media Foundation": cv2.CAP_MSMF,
+                "Auto": cv2.CAP_ANY
+            }
+        
+        with col3:
+            if st.button("Tester", use_container_width=True):
+                result = test_single_camera(test_index, backend_map[test_backend])
+                if result["success"]:
+                    st.success(f"✅ Caméra {test_index} OK")
+                    st.json(result)
+                else:
+                    st.error(f"❌ Caméra {test_index}: {result.get('error', 'Inconnu')}")
+        
+        # Conseils
+        st.divider()
+        st.write("### 💡 Conseils de dépannage")
+        st.markdown("""
+        1. **Vérifiez les permissions** : 
+           - Windows : Paramètres > Confidentialité > Caméra > Autoriser les applications
+           
+        2. **Vérifiez que la caméra n'est pas utilisée** :
+           - Fermez les autres applications (Teams, Zoom, etc.)
+           
+        3. **Testez avec l'application native** :
+           - Ouvrez l'application "Appareil photo" de Windows
+           
+        4. **Mettez à jour les pilotes** :
+           - Gestionnaire de périphériques > Caméras > Mettre à jour
+           
+        5. **Essayez différents indices** :
+           - 0 = Webcam intégrée
+           - 1 = Caméra externe
+           - 2+ = Autres périphériques
+        """)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================== FONCTIONS EXISTANTES ====================
 def detecter_code_barre(image):
@@ -379,40 +568,19 @@ def detecter_pieces(image):
     return resultat, nb_pieces
 
 def base64_to_image(base64_string):
+    """Convertit une chaîne base64 en image OpenCV"""
     img_data = base64.b64decode(base64_string)
     nparr = np.frombuffer(img_data, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
-def test_cameras():
-    """Teste les différentes caméras disponibles"""
-    st.write("### 🔍 Test des caméras disponibles")
-    working_cameras = []
-    
-    for i in range(5):  # Tester les 5 premiers index
-        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            if ret:
-                working_cameras.append(i)
-                st.success(f"✅ Caméra {i} fonctionne")
-            else:
-                st.warning(f"⚠️ Caméra {i} détectée mais ne capture pas")
-            cap.release()
-        else:
-            st.error(f"❌ Caméra {i} non disponible")
-    
-    if working_cameras:
-        st.info(f"✅ Caméras fonctionnelles : {working_cameras}")
-        return working_cameras
-    else:
-        st.error("❌ Aucune caméra trouvée")
-        return []
-
 def webcam_section():
-    """Section webcam avec OpenCV direct"""
+    """Section webcam avec OpenCV direct et diagnostic"""
     st.markdown('<div class="webcam-container">', unsafe_allow_html=True)
     st.markdown("### 📷 Webcam en direct - Comptage automatique")
+    
+    # Ajouter le diagnostic
+    diagnostic_cameras()
     
     # Initialisation dans session_state
     if 'webcam_stream' not in st.session_state:
@@ -420,17 +588,26 @@ def webcam_section():
     if 'webcam_active' not in st.session_state:
         st.session_state.webcam_active = False
     if 'camera_index' not in st.session_state:
-        st.session_state.camera_index = 2
+        st.session_state.camera_index = 0
     
     # Interface de contrôle
     col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
     
     with col1:
-        # Test des caméras
-        if st.button("🔍 Tester les caméras"):
-            working = test_cameras()
-            if working:
-                st.session_state.camera_index = working[0]
+        # Choix du backend
+        backend_option = st.selectbox(
+            "Backend",
+            ["DirectShow", "Media Foundation", "Auto"],
+            index=0,
+            key="backend_select"
+        )
+        
+        backend_map = {
+            "DirectShow": cv2.CAP_DSHOW,
+            "Media Foundation": cv2.CAP_MSMF,
+            "Auto": cv2.CAP_ANY
+        }
+        backend = backend_map[backend_option]
     
     with col2:
         camera_id = st.number_input("Index caméra", 
@@ -444,7 +621,7 @@ def webcam_section():
     with col3:
         if not st.session_state.webcam_active:
             if st.button("▶️ Démarrer", use_container_width=True):
-                stream = WebcamStream(camera_id)
+                stream = WebcamStream(camera_id, backend)
                 if stream.start():
                     st.session_state.webcam_stream = stream
                     st.session_state.webcam_active = True
@@ -465,46 +642,52 @@ def webcam_section():
     
     # Affichage du flux
     if st.session_state.webcam_active and st.session_state.webcam_stream:
+        # Créer un placeholder pour l'image
+        image_placeholder = st.empty()
+        stats_placeholder = st.empty()
+        
         frame = st.session_state.webcam_stream.read()
         if frame is not None:
             # Afficher l'image
-            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
-                    channels="RGB", use_column_width=True)
+            image_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 
+                                   channels="RGB", use_column_width=True)
             
             # Statistiques en direct
             stream = st.session_state.webcam_stream
-            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-            
-            with col_s1:
-                st.metric("Total pièces", stream.nb_pieces)
-            with col_s2:
-                rouge = stream.stats_couleur.get('rouge', 0)
-                bleu = stream.stats_couleur.get('bleu', 0)
-                st.metric("Rouge/Bleu", f"{rouge}/{bleu}")
-            with col_s3:
-                vert = stream.stats_couleur.get('vert', 0)
-                jaune = stream.stats_couleur.get('jaune', 0)
-                st.metric("Vert/Jaune", f"{vert}/{jaune}")
-            with col_s4:
-                st.metric("Caméra", f"Index {camera_id}")
-            
-            # Option pour capturer
-            if st.button("📸 Capturer cette image pour l'article"):
-                # Convertir l'image en base64 pour la sauvegarde
-                _, buffer = cv2.imencode('.jpg', frame)
-                img_base64 = base64.b64encode(buffer).decode('utf-8')
-                st.session_state.derniere_capture = {
-                    'image': img_base64,
-                    'nb_pieces': stream.nb_pieces,
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                st.success(f"✅ Image capturée avec {stream.nb_pieces} pièces!")
+            with stats_placeholder.container():
+                col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                
+                with col_s1:
+                    st.metric("Total pièces", stream.nb_pieces)
+                with col_s2:
+                    rouge = stream.stats_couleur.get('rouge', 0)
+                    bleu = stream.stats_couleur.get('bleu', 0)
+                    st.metric("Rouge/Bleu", f"{rouge}/{bleu}")
+                with col_s3:
+                    vert = stream.stats_couleur.get('vert', 0)
+                    jaune = stream.stats_couleur.get('jaune', 0)
+                    st.metric("Vert/Jaune", f"{vert}/{jaune}")
+                with col_s4:
+                    st.metric("FPS", stream.fps)
+                
+                # Option pour capturer
+                if st.button("📸 Capturer cette image pour l'article"):
+                    # Convertir l'image en base64 pour la sauvegarde
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    img_base64 = base64.b64encode(buffer).decode('utf-8')
+                    st.session_state.derniere_capture = {
+                        'image': img_base64,
+                        'nb_pieces': stream.nb_pieces,
+                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    st.success(f"✅ Image capturée avec {stream.nb_pieces} pièces!")
             
             # Refresh automatique
             time.sleep(0.1)
             st.rerun()
     else:
         st.info("👆 Cliquez sur 'Démarrer' pour activer la webcam")
+        st.info("💡 Si la caméra ne fonctionne pas, utilisez l'outil de diagnostic ci-dessus")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
