@@ -35,6 +35,10 @@ ARTICLES_PREDEFINIS = {
         "emplacement": "A194"
     }
 }
+
+# Initialiser dans session_state pour pouvoir le modifier
+if 'articles_predefinis' not in st.session_state:
+    st.session_state.articles_predefinis = ARTICLES_PREDEFINIS.copy()
 # =====================================================================================================
 
 # ==================== FONCTIONS D'IMPORT/EXPORT DU DICTIONNAIRE ====================
@@ -57,7 +61,7 @@ def exporter_dictionnaire_articles():
     
     # Données
     row = 2
-    for code, infos in ARTICLES_PREDEFINIS.items():
+    for code, infos in st.session_state.articles_predefinis.items():
         sheet.cell(row=row, column=1).value = code
         sheet.cell(row=row, column=2).value = infos["libelle"]
         sheet.cell(row=row, column=3).value = infos["emplacement"]
@@ -261,11 +265,11 @@ class GestionnairePieces:
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
             # Si le code existe dans les prédéfinis et que le libellé ou l'emplacement sont vides, on les remplit
-            if code_article in ARTICLES_PREDEFINIS:
+            if code_article in st.session_state.articles_predefinis:
                 if not libelle:
-                    libelle = ARTICLES_PREDEFINIS[code_article]["libelle"]
+                    libelle = st.session_state.articles_predefinis[code_article]["libelle"]
                 if not emplacement:
-                    emplacement = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+                    emplacement = st.session_state.articles_predefinis[code_article]["emplacement"]
             
             self.articles[code_article] = {
                 'libelle': libelle,
@@ -557,8 +561,75 @@ Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 6. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale avec la liste des articles
+# Barre latérale
 with st.sidebar:
+    # ==================== BOUTONS D'IMPORT/EXPORT EN HAUT ====================
+    st.header("📂 Gestion de la base")
+    col_import_export = st.columns(2)
+    
+    with col_import_export[0]:
+        # Export du dictionnaire
+        excel_dico = exporter_dictionnaire_articles()
+        st.download_button(
+            label="📤 Exporter Excel",
+            data=excel_dico,
+            file_name=f"base_articles_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            help="Exporte la base d'articles au format Excel",
+            key="export_base_btn"
+        )
+    
+    with col_import_export[1]:
+        # Import du dictionnaire
+        uploaded_dico = st.file_uploader(
+            "📥 Importer Excel",
+            type=['xlsx'],
+            key="upload_dico",
+            help="Importez un fichier Excel pour mettre à jour la base",
+            label_visibility="collapsed"
+        )
+    
+    # Traitement de l'import
+    if uploaded_dico is not None:
+        with st.spinner("Import en cours..."):
+            resultat = importer_dictionnaire_articles(uploaded_dico)
+            
+            if isinstance(resultat, tuple) and len(resultat) == 2:
+                nouveau_dico, lignes_ignorees = resultat
+                
+                if nouveau_dico:
+                    st.success(f"✅ Import réussi !")
+                    
+                    col_stat1, col_stat2, col_stat3 = st.columns(3)
+                    with col_stat1:
+                        st.metric("Importés", len(nouveau_dico))
+                    with col_stat2:
+                        st.metric("Remplacés", len(set(nouveau_dico.keys()) & set(st.session_state.articles_predefinis.keys())))
+                    with col_stat3:
+                        st.metric("Nouveaux", len(set(nouveau_dico.keys()) - set(st.session_state.articles_predefinis.keys())))
+                    
+                    if lignes_ignorees > 0:
+                        st.warning(f"⚠️ {lignes_ignorees} lignes ignorées")
+                    
+                    col_conf1, col_conf2 = st.columns(2)
+                    with col_conf1:
+                        if st.button("✅ Confirmer", use_container_width=True):
+                            st.session_state.articles_predefinis = nouveau_dico
+                            st.success("🎉 Base mise à jour!")
+                            st.rerun()
+                    
+                    with col_conf2:
+                        if st.button("❌ Annuler", use_container_width=True):
+                            st.rerun()
+                else:
+                    st.error("❌ Aucun article valide")
+            else:
+                st.error(f"❌ {resultat}")
+    
+    st.divider()
+    
+    # ==================== ARTICLES EN INVENTAIRE ====================
     st.header("📋 Articles en inventaire")
     
     if gestionnaire.articles:
@@ -625,90 +696,13 @@ with st.sidebar:
     else:
         st.info("Aucun article pour le moment")
     
-    # ==================== SECTION GESTION DE LA BASE D'ARTICLES ====================
-    st.divider()
-    st.header("📚 Base articles prédéfinis")
-    
-    with st.expander("Gérer la base d'articles", expanded=False):
-        # Afficher le nombre d'articles
-        st.info(f"📊 {len(ARTICLES_PREDEFINIS)} articles dans la base")
-        
-        # Afficher un aperçu
-        apercu = afficher_apercu_dictionnaire(ARTICLES_PREDEFINIS)
-        if apercu is not None:
-            st.dataframe(apercu, use_container_width=True, height=200)
-        
-        # Boutons d'export/import
-        col_exp1, col_exp2 = st.columns(2)
-        
-        with col_exp1:
-            # Export du dictionnaire
-            excel_dico = exporter_dictionnaire_articles()
-            st.download_button(
-                label="📤 Exporter la base",
-                data=excel_dico,
-                file_name=f"base_articles_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                help="Exporte la base d'articles au format Excel pour modification"
-            )
-        
-        with col_exp2:
-            # Import du dictionnaire
-            uploaded_dico = st.file_uploader(
-                "📥 Importer une base",
-                type=['xlsx'],
-                key="upload_dico",
-                help="Importez un fichier Excel pour mettre à jour la base d'articles"
-            )
-        
-        if uploaded_dico is not None:
-            with st.spinner("Import en cours..."):
-                resultat = importer_dictionnaire_articles(uploaded_dico)
-                
-                if isinstance(resultat, tuple) and len(resultat) == 2:
-                    nouveau_dico, lignes_ignorees = resultat
-                    
-                    if nouveau_dico:
-                        # Afficher les statistiques
-                        st.success(f"✅ Import réussi !")
-                        
-                        col_stat1, col_stat2, col_stat3 = st.columns(3)
-                        with col_stat1:
-                            st.metric("Articles importés", len(nouveau_dico))
-                        with col_stat2:
-                            st.metric("Articles remplacés", len(set(nouveau_dico.keys()) & set(ARTICLES_PREDEFINIS.keys())))
-                        with col_stat3:
-                            st.metric("Nouveaux articles", len(set(nouveau_dico.keys()) - set(ARTICLES_PREDEFINIS.keys())))
-                        
-                        if lignes_ignorees > 0:
-                            st.warning(f"⚠️ {lignes_ignorees} lignes ignorées (codes vides)")
-                        
-                        # Proposer la mise à jour
-                        col_conf1, col_conf2 = st.columns(2)
-                        with col_conf1:
-                            if st.button("✅ Confirmer la mise à jour", use_container_width=True):
-                                # Mettre à jour le dictionnaire global
-                                global ARTICLES_PREDEFINIS
-                                ARTICLES_PREDEFINIS = nouveau_dico
-                                st.success("🎉 Base d'articles mise à jour avec succès!")
-                                st.rerun()
-                        
-                        with col_conf2:
-                            if st.button("❌ Annuler", use_container_width=True):
-                                st.rerun()
-                    else:
-                        st.error("❌ Aucun article valide trouvé dans le fichier")
-                else:
-                    st.error(f"❌ {resultat}")
-    
-    # ==================== SECTION TABLEAU DES ARTICLES ====================
+    # ==================== TABLEAU DES ARTICLES ====================
     st.divider()
     st.header("📋 Tableau des articles")
     
-    # Créer un DataFrame à partir du dictionnaire ARTICLES_PREDEFINIS
+    # Créer un DataFrame à partir du dictionnaire des articles
     articles_data = []
-    for code, infos in ARTICLES_PREDEFINIS.items():
+    for code, infos in st.session_state.articles_predefinis.items():
         articles_data.append({
             "Code": code,
             "Libellé": infos["libelle"],
@@ -719,11 +713,7 @@ with st.sidebar:
     
     if not df_articles.empty:
         # Options d'affichage
-        col_view1, col_view2 = st.columns(2)
-        with col_view1:
-            recherche = st.text_input("🔍 Rechercher", placeholder="Code ou libellé...")
-        with col_view2:
-            tri = st.selectbox("📊 Trier par", ["Code", "Libellé", "Emplacement"])
+        recherche = st.text_input("🔍 Rechercher", placeholder="Code ou libellé...")
         
         # Filtrer les résultats
         if recherche:
@@ -735,20 +725,29 @@ with st.sidebar:
         else:
             df_filtre = df_articles
         
-        # Trier
-        df_filtre = df_filtre.sort_values(by=tri)
+        # Trier par défaut
+        df_filtre = df_filtre.sort_values(by="Code")
         
         # Afficher le compteur
         st.caption(f"📊 {len(df_filtre)} articles sur {len(df_articles)}")
         
         # Afficher le tableau
         if not df_filtre.empty:
-            afficher_tableau_articles(df_filtre)
+            st.dataframe(
+                df_filtre,
+                use_container_width=True,
+                height=300,
+                column_config={
+                    "Code": "Code Article",
+                    "Libellé": "Libellé",
+                    "Emplacement": "Emplacement"
+                }
+            )
             
             # Option pour télécharger le tableau
             csv = df_filtre.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📥 Télécharger le tableau (CSV)",
+                label="📥 Télécharger CSV",
                 data=csv,
                 file_name=f"articles_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
@@ -758,28 +757,6 @@ with st.sidebar:
             st.info("Aucun résultat trouvé")
     else:
         st.info("Aucun article dans la base")
-    
-    # ==================== STATISTIQUES DES ARTICLES ====================
-    st.divider()
-    st.header("📊 Statistiques")
-    
-    if not df_articles.empty:
-        col_stat1, col_stat2, col_stat3 = st.columns(3)
-        with col_stat1:
-            st.metric("Total articles", len(df_articles))
-        with col_stat2:
-            emplacements_renseignes = df_articles['Emplacement'].notna().sum()
-            st.metric("Emplacements", f"{emplacements_renseignes}/{len(df_articles)}")
-        with col_stat3:
-            libelles_renseignes = df_articles['Libellé'].notna().sum()
-            st.metric("Libellés", f"{libelles_renseignes}/{len(df_articles)}")
-        
-        # Top emplacements
-        st.subheader("📍 Top emplacements")
-        top_emplacements = df_articles['Emplacement'].value_counts().head(5)
-        for emp, count in top_emplacements.items():
-            if emp and emp != '':
-                st.caption(f"{emp}: {count} article{'s' if count > 1 else ''}")
     
     # ==================== ACCÈS RAPIDE ====================
     st.divider()
@@ -793,13 +770,12 @@ with st.sidebar:
             format_func=lambda x: f"{x} - {df_articles[df_articles['Code']==x]['Libellé'].values[0][:30]}..."
         )
         
-        if article_selection and st.button("📦 Voir les détails", use_container_width=True):
+        if article_selection and st.button("📦 Utiliser cet article", use_container_width=True):
             # Pré-remplir le formulaire avec l'article sélectionné
             st.session_state.code_detecte = article_selection
             st.session_state.page = "saisie"
             st.rerun()
     
-    # =====================================================================
     st.divider()
 
 # Contenu principal
@@ -906,8 +882,8 @@ if st.session_state.page == "saisie":
     
     with col_lib:
         # Déterminer le libellé en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
+        if code_article and code_article in st.session_state.articles_predefinis:
+            libelle_value = st.session_state.articles_predefinis[code_article]["libelle"]
         else:
             libelle_value = ""
         
@@ -920,8 +896,8 @@ if st.session_state.page == "saisie":
     
     with col_emp:
         # Déterminer l'emplacement en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
+        if code_article and code_article in st.session_state.articles_predefinis:
+            emplacement_value = st.session_state.articles_predefinis[code_article]["emplacement"]
         else:
             emplacement_value = ""
         
@@ -933,11 +909,11 @@ if st.session_state.page == "saisie":
         )
     
     # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
-    if code_article and code_article in ARTICLES_PREDEFINIS:
+    if code_article and code_article in st.session_state.articles_predefinis:
         st.markdown(f"""
         <div class="article-found">
-            <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
-            <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
+            <strong>📝 Article trouvé :</strong> {st.session_state.articles_predefinis[code_article]["libelle"]}<br>
+            <strong>📍 Emplacement :</strong> {st.session_state.articles_predefinis[code_article]["emplacement"]}
         </div>
         """, unsafe_allow_html=True)
     
