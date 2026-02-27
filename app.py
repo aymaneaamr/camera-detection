@@ -128,48 +128,6 @@ def afficher_apercu_dictionnaire(dico):
     
     df = pd.DataFrame(data)
     return df
-
-def afficher_tableau_articles(df_articles):
-    """Affiche un tableau stylisé des articles"""
-    if df_articles.empty:
-        return None
-    
-    # Style du tableau
-    st.markdown("""
-    <style>
-    .dataframe {
-        font-size: 14px;
-        border-collapse: collapse;
-        width: 100%;
-    }
-    .dataframe th {
-        background-color: #4CAF50;
-        color: white;
-        font-weight: bold;
-        padding: 12px;
-        text-align: left;
-    }
-    .dataframe td {
-        padding: 8px;
-        border-bottom: 1px solid #ddd;
-    }
-    .dataframe tr:hover {
-        background-color: #f5f5f5;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Afficher le tableau avec des couleurs alternées
-    st.dataframe(
-        df_articles,
-        use_container_width=True,
-        height=400,
-        column_config={
-            "Code": st.column_config.TextColumn("Code Article", width="medium"),
-            "Libellé": st.column_config.TextColumn("Libellé", width="large"),
-            "Emplacement": st.column_config.TextColumn("Emplacement", width="medium")
-        }
-    )
 # =====================================================================================
 
 # Configuration de la page
@@ -557,76 +515,8 @@ Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 6. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale
+# Barre latérale avec la liste des articles
 with st.sidebar:
-    # ==================== BOUTONS D'IMPORT/EXPORT EN HAUT ====================
-    st.header("📂 Gestion de la base")
-    col_import_export = st.columns(2)
-    
-    with col_import_export[0]:
-        # Export du dictionnaire
-        excel_dico = exporter_dictionnaire_articles()
-        st.download_button(
-            label="📤 Exporter Excel",
-            data=excel_dico,
-            file_name=f"base_articles_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            help="Exporte la base d'articles au format Excel",
-            key="export_base_btn"
-        )
-    
-    with col_import_export[1]:
-        # Import du dictionnaire
-        uploaded_dico = st.file_uploader(
-            "📥 Importer Excel",
-            type=['xlsx'],
-            key="upload_dico",
-            help="Importez un fichier Excel pour mettre à jour la base",
-            label_visibility="collapsed"
-        )
-    
-    # Traitement de l'import
-    if uploaded_dico is not None:
-        with st.spinner("Import en cours..."):
-            resultat = importer_dictionnaire_articles(uploaded_dico)
-            
-            if isinstance(resultat, tuple) and len(resultat) == 2:
-                nouveau_dico, lignes_ignorees = resultat
-                
-                if nouveau_dico:
-                    st.success(f"✅ Import réussi !")
-                    
-                    col_stat1, col_stat2, col_stat3 = st.columns(3)
-                    with col_stat1:
-                        st.metric("Importés", len(nouveau_dico))
-                    with col_stat2:
-                        st.metric("Remplacés", len(set(nouveau_dico.keys()) & set(ARTICLES_PREDEFINIS.keys())))
-                    with col_stat3:
-                        st.metric("Nouveaux", len(set(nouveau_dico.keys()) - set(ARTICLES_PREDEFINIS.keys())))
-                    
-                    if lignes_ignorees > 0:
-                        st.warning(f"⚠️ {lignes_ignorees} lignes ignorées")
-                    
-                    col_conf1, col_conf2 = st.columns(2)
-                    with col_conf1:
-                        if st.button("✅ Confirmer", use_container_width=True):
-                            global ARTICLES_PREDEFINIS
-                            ARTICLES_PREDEFINIS = nouveau_dico
-                            st.success("🎉 Base mise à jour!")
-                            st.rerun()
-                    
-                    with col_conf2:
-                        if st.button("❌ Annuler", use_container_width=True):
-                            st.rerun()
-                else:
-                    st.error("❌ Aucun article valide")
-            else:
-                st.error(f"❌ {resultat}")
-    
-    st.divider()
-    
-    # ==================== ARTICLES EN INVENTAIRE ====================
     st.header("📋 Articles en inventaire")
     
     if gestionnaire.articles:
@@ -693,87 +583,85 @@ with st.sidebar:
     else:
         st.info("Aucun article pour le moment")
     
-    # ==================== TABLEAU DES ARTICLES ====================
+    # ==================== SECTION GESTION DE LA BASE D'ARTICLES ====================
     st.divider()
-    st.header("📋 Tableau des articles")
+    st.header("📚 Base articles prédéfinis")
     
-    # Créer un DataFrame à partir du dictionnaire ARTICLES_PREDEFINIS
-    articles_data = []
-    for code, infos in ARTICLES_PREDEFINIS.items():
-        articles_data.append({
-            "Code": code,
-            "Libellé": infos["libelle"],
-            "Emplacement": infos["emplacement"]
-        })
-    
-    df_articles = pd.DataFrame(articles_data)
-    
-    if not df_articles.empty:
-        # Options d'affichage
-        recherche = st.text_input("🔍 Rechercher", placeholder="Code ou libellé...")
+    with st.expander("Gérer la base d'articles", expanded=False):
+        # Afficher le nombre d'articles
+        st.info(f"📊 {len(ARTICLES_PREDEFINIS)} articles dans la base")
         
-        # Filtrer les résultats
-        if recherche:
-            df_filtre = df_articles[
-                df_articles['Code'].str.contains(recherche, case=False, na=False) |
-                df_articles['Libellé'].str.contains(recherche, case=False, na=False) |
-                df_articles['Emplacement'].str.contains(recherche, case=False, na=False)
-            ]
-        else:
-            df_filtre = df_articles
+        # Afficher un aperçu
+        apercu = afficher_apercu_dictionnaire(ARTICLES_PREDEFINIS)
+        if apercu is not None:
+            st.dataframe(apercu, use_container_width=True, height=200)
         
-        # Trier par défaut
-        df_filtre = df_filtre.sort_values(by="Code")
+        # Boutons d'export/import
+        col_exp1, col_exp2 = st.columns(2)
         
-        # Afficher le compteur
-        st.caption(f"📊 {len(df_filtre)} articles sur {len(df_articles)}")
-        
-        # Afficher le tableau
-        if not df_filtre.empty:
-            st.dataframe(
-                df_filtre,
-                use_container_width=True,
-                height=300,
-                column_config={
-                    "Code": "Code Article",
-                    "Libellé": "Libellé",
-                    "Emplacement": "Emplacement"
-                }
-            )
-            
-            # Option pour télécharger le tableau
-            csv = df_filtre.to_csv(index=False).encode('utf-8')
+        with col_exp1:
+            # Export du dictionnaire
+            excel_dico = exporter_dictionnaire_articles()
             st.download_button(
-                label="📥 Télécharger CSV",
-                data=csv,
-                file_name=f"articles_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
+                label="📤 Exporter la base",
+                data=excel_dico,
+                file_name=f"base_articles_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                help="Exporte la base d'articles au format Excel pour modification"
             )
-        else:
-            st.info("Aucun résultat trouvé")
-    else:
-        st.info("Aucun article dans la base")
-    
-    # ==================== ACCÈS RAPIDE ====================
-    st.divider()
-    st.header("⚡ Accès rapide")
-    
-    # Sélecteur d'article
-    if not df_articles.empty:
-        article_selection = st.selectbox(
-            "Sélectionner un article",
-            options=df_articles['Code'].tolist(),
-            format_func=lambda x: f"{x} - {df_articles[df_articles['Code']==x]['Libellé'].values[0][:30]}..."
-        )
         
-        if article_selection and st.button("📦 Utiliser cet article", use_container_width=True):
-            # Pré-remplir le formulaire avec l'article sélectionné
-            st.session_state.code_detecte = article_selection
-            st.session_state.page = "saisie"
-            st.rerun()
+        with col_exp2:
+            # Import du dictionnaire
+            uploaded_dico = st.file_uploader(
+                "📥 Importer une base",
+                type=['xlsx'],
+                key="upload_dico",
+                help="Importez un fichier Excel pour mettre à jour la base d'articles"
+            )
+        
+        if uploaded_dico is not None:
+            with st.spinner("Import en cours..."):
+                resultat = importer_dictionnaire_articles(uploaded_dico)
+                
+                if isinstance(resultat, tuple) and len(resultat) == 2:
+                    nouveau_dico, lignes_ignorees = resultat
+                    
+                    if nouveau_dico:
+                        # Afficher les statistiques
+                        st.success(f"✅ Import réussi !")
+                        
+                        col_stat1, col_stat2, col_stat3 = st.columns(3)
+                        with col_stat1:
+                            st.metric("Articles importés", len(nouveau_dico))
+                        with col_stat2:
+                            st.metric("Articles remplacés", len(set(nouveau_dico.keys()) & set(ARTICLES_PREDEFINIS.keys())))
+                        with col_stat3:
+                            st.metric("Nouveaux articles", len(set(nouveau_dico.keys()) - set(ARTICLES_PREDEFINIS.keys())))
+                        
+                        if lignes_ignorees > 0:
+                            st.warning(f"⚠️ {lignes_ignorees} lignes ignorées (codes vides)")
+                        
+                        # Proposer la mise à jour
+                        col_conf1, col_conf2 = st.columns(2)
+                        with col_conf1:
+                            if st.button("✅ Confirmer la mise à jour", use_container_width=True):
+                                # Mettre à jour le dictionnaire global
+                                global ARTICLES_PREDEFINIS
+                                ARTICLES_PREDEFINIS = nouveau_dico
+                                st.success("🎉 Base d'articles mise à jour avec succès!")
+                                st.rerun()
+                        
+                        with col_conf2:
+                            if st.button("❌ Annuler", use_container_width=True):
+                                st.rerun()
+                    else:
+                        st.error("❌ Aucun article valide trouvé dans le fichier")
+                else:
+                    st.error(f"❌ {resultat}")
     
     st.divider()
+    # =====================================================================================
 
 # Contenu principal
 if st.session_state.page == "saisie":
