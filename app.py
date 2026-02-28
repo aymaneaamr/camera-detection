@@ -12,32 +12,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
 
-# ==================== Dictionnaire des articles prédéfinis avec leurs emplacements ====================
-ARTICLES_PREDEFINIS = {
-    "10751037": {
-        "libelle": "Capacitor E54.G85-203G30 Un 1260 V DC / 750 AC MKP 20µF",
-        "emplacement": "A191"
-    },
-    "10751038": {
-        "libelle": "Contacteur principal Bipolaire",
-        "emplacement": "A204"
-    },
-    "10751039": {
-        "libelle": "Contacteur de précharge Bipolaire",
-        "emplacement": "A204"
-    },
-    "10751040": {
-        "libelle": "Coupe circuit 1A, 480VAC, 3Poles",
-        "emplacement": "A192"
-    },
-    "10751050": {
-        "libelle": "Cosse à sertir 50x8",
-        "emplacement": "A194"
-    }
-}
-# =====================================================================================================
-
-# Configuration de la page
+# ==================== Configuration de la page ====================
 st.set_page_config(
     page_title="Gestionnaire d'Inventaire Multi-Pièces",
     page_icon="📦",
@@ -103,6 +78,13 @@ st.markdown("""
         border-left: 5px solid #004085;
         margin: 0.5rem 0;
     }
+    .import-section {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 2px dashed #6c757d;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -125,13 +107,6 @@ class GestionnairePieces:
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
-            # Si le code existe dans les prédéfinis et que le libellé ou l'emplacement sont vides, on les remplit
-            if code_article in ARTICLES_PREDEFINIS:
-                if not libelle:
-                    libelle = ARTICLES_PREDEFINIS[code_article]["libelle"]
-                if not emplacement:
-                    emplacement = ARTICLES_PREDEFINIS[code_article]["emplacement"]
-            
             self.articles[code_article] = {
                 'libelle': libelle,
                 'photos': [],
@@ -140,6 +115,58 @@ class GestionnairePieces:
             }
             return True
         return False
+    
+    def importer_articles_excel(self, df):
+        """Importe des articles à partir d'un DataFrame Excel"""
+        articles_importes = 0
+        articles_existants = 0
+        erreurs = 0
+        
+        # Vérifier les colonnes nécessaires
+        colonnes_requises = ['code_article', 'libelle', 'emplacement']
+        colonnes_df = df.columns.str.lower().tolist()
+        
+        # Chercher les colonnes correspondantes
+        mapping_colonnes = {}
+        for col_req in colonnes_requises:
+            for col_df in colonnes_df:
+                if col_req in col_df or col_df in col_req:
+                    mapping_colonnes[col_req] = col_df
+                    break
+        
+        if len(mapping_colonnes) < 3:
+            st.error("""
+            ❌ Le fichier Excel doit contenir des colonnes pour :
+            - Code article (ex: 'code', 'code_article', 'article')
+            - Libellé (ex: 'libelle', 'description', 'designation')
+            - Emplacement (ex: 'emplacement', 'location', 'position')
+            """)
+            return 0, 0, 0
+        
+        # Parcourir le DataFrame
+        for index, row in df.iterrows():
+            try:
+                code = str(row[mapping_colonnes['code_article']]).strip()
+                libelle = str(row[mapping_colonnes['libelle']]).strip() if pd.notna(row[mapping_colonnes['libelle']]) else ""
+                emplacement = str(row[mapping_colonnes['emplacement']]).strip() if pd.notna(row[mapping_colonnes['emplacement']]) else ""
+                
+                if code and code not in self.articles:
+                    self.articles[code] = {
+                        'libelle': libelle,
+                        'photos': [],
+                        'emplacement': emplacement,
+                        'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    articles_importes += 1
+                elif code in self.articles:
+                    articles_existants += 1
+                else:
+                    erreurs += 1
+            except Exception as e:
+                erreurs += 1
+                continue
+        
+        return articles_importes, articles_existants, erreurs
     
     def ajouter_photo_article(self, code_article, frame_original, frame_analyse, nb_pieces):
         """Ajoute une photo analysée à un article existant"""
@@ -225,7 +252,7 @@ class GestionnairePieces:
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
-        # En-têtes (ajout de la colonne Libellé)
+        # En-têtes
         headers = ["Code Article", "Libellé", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
@@ -263,7 +290,7 @@ class GestionnairePieces:
         # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
-        # En-têtes détail (ajout des colonnes Libellé et Emplacement)
+        # En-têtes détail
         detail_headers = ["Code Article", "Libellé", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
@@ -407,6 +434,8 @@ if 'code_detecte' not in st.session_state:
     st.session_state.code_detecte = None
 if 'scan_effectue' not in st.session_state:
     st.session_state.scan_effectue = False
+if 'show_import' not in st.session_state:
+    st.session_state.show_import = False
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -415,20 +444,22 @@ st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Scanner** un code-barres pour identifier automatiquement l'article
-2. **Ajouter** un libellé descriptif (optionnel)
-3. **Ajouter** un emplacement de stockage (optionnel)
-4. **Ajouter** plusieurs photos pour cet article
-5. **Changer** d'article et répéter
-6. **Exporter** un fichier Excel avec tous les totaux
+2. **Importer** un fichier Excel avec vos articles (code, libellé, emplacement)
+3. **Ajouter** plusieurs photos pour chaque article
+4. **Exporter** un fichier Excel avec tous les totaux
 """)
 
 # Barre latérale avec la liste des articles
 with st.sidebar:
     st.header("📋 Articles en inventaire")
     
+    # Bouton pour importer Excel
+    if st.button("📥 Importer articles Excel", use_container_width=True):
+        st.session_state.show_import = True
+    
     if gestionnaire.articles:
         # Afficher tous les articles avec leurs totaux, libellés et emplacements
-        for code_article in gestionnaire.articles.keys():
+        for code_article in sorted(gestionnaire.articles.keys()):
             total = gestionnaire.get_total_article(code_article)
             libelle = gestionnaire.get_libelle_article(code_article)
             emplacement = gestionnaire.get_emplacement_article(code_article)
@@ -447,7 +478,7 @@ with st.sidebar:
             if libelle or emplacement:
                 badge_text = ""
                 if libelle:
-                    badge_text += f"📝 {libelle}"
+                    badge_text += f"📝 {libelle[:30]}{'...' if len(libelle) > 30 else ''}"
                 if libelle and emplacement:
                     badge_text += " | "
                 if emplacement:
@@ -459,7 +490,7 @@ with st.sidebar:
         st.divider()
         
         # Bouton pour retourner à la saisie
-        if st.button("➕ Nouvel article", use_container_width=True):
+        if st.button("➕ Nouvel article manuel", use_container_width=True):
             st.session_state.page = "saisie"
             st.session_state.article_selectionne = None
             st.session_state.code_detecte = None
@@ -488,9 +519,80 @@ with st.sidebar:
                 st.rerun()
     else:
         st.info("Aucun article pour le moment")
+        
+        # Si aucun article, proposer directement l'import
+        if st.button("📥 Importer des articles Excel", use_container_width=True):
+            st.session_state.show_import = True
+
+# Section d'import Excel
+if st.session_state.show_import:
+    st.markdown("---")
+    st.markdown('<div class="import-section">', unsafe_allow_html=True)
+    st.header("📥 Importer des articles depuis Excel")
+    st.markdown("""
+    ### Format du fichier Excel attendu :
+    Le fichier doit contenir ces 3 colonnes (les noms peuvent varier) :
+    - **Code article** : Identifiant unique (ex: 'code', 'code_article', 'article')
+    - **Libellé** : Description de l'article (ex: 'libelle', 'description', 'designation')
+    - **Emplacement** : Position de stockage (ex: 'emplacement', 'location', 'position')
+    
+    **Exemple de structure :**
+    | code_article | libelle | emplacement |
+    |--------------|---------|-------------|
+    | 10751037 | Capacitor E54.G85-203G30 | A191 |
+    | 10751038 | Contacteur principal | A204 |
+    """)
+    
+    uploaded_excel = st.file_uploader("Choisir un fichier Excel", type=['xlsx', 'xls'], key="import_excel")
+    
+    if uploaded_excel:
+        try:
+            # Lire le fichier Excel
+            df = pd.read_excel(uploaded_excel)
+            
+            # Afficher un aperçu
+            st.subheader("Aperçu du fichier")
+            st.dataframe(df.head())
+            
+            # Statistiques
+            st.subheader("Statistiques")
+            st.write(f"📊 Total lignes : {len(df)}")
+            st.write(f"📋 Colonnes trouvées : {', '.join(df.columns)}")
+            
+            # Bouton d'import
+            if st.button("✅ Confirmer l'import", use_container_width=True):
+                with st.spinner("Import en cours..."):
+                    importes, existants, erreurs = gestionnaire.importer_articles_excel(df)
+                    
+                    # Afficher le résultat
+                    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                    with col_r1:
+                        st.metric("✅ Importés", importes)
+                    with col_r2:
+                        st.metric("⚠️ Déjà existants", existants)
+                    with col_r3:
+                        st.metric("❌ Erreurs", erreurs)
+                    with col_r4:
+                        st.metric("📊 Total après import", len(gestionnaire.articles))
+                    
+                    if importes > 0:
+                        st.success(f"✅ {importes} articles importés avec succès !")
+                        st.session_state.show_import = False
+                        st.rerun()
+        
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
+    
+    # Bouton pour fermer
+    if st.button("❌ Fermer l'import", use_container_width=True):
+        st.session_state.show_import = False
+        st.rerun()
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("---")
 
 # Contenu principal
-if st.session_state.page == "saisie":
+if st.session_state.page == "saisie" and not st.session_state.show_import:
     # Page de saisie d'un nouvel article avec scan de code-barres
     st.header("➕ Ajouter un nouvel article")
     
@@ -574,7 +676,7 @@ if st.session_state.page == "saisie":
     
     st.markdown("---")
     
-    # ==================== FORMULAIRE AVEC SAISIE AUTOMATIQUE DU LIBELLÉ ET DE L'EMPLACEMENT ====================
+    # Formulaire de saisie manuelle
     st.markdown("### 📝 Informations de l'article")
     
     # Valeur par défaut pour le code (depuis le scan)
@@ -592,41 +694,20 @@ if st.session_state.page == "saisie":
         )
     
     with col_lib:
-        # Déterminer le libellé en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            libelle_value = ARTICLES_PREDEFINIS[code_article]["libelle"]
-        else:
-            libelle_value = ""
-        
         libelle = st.text_input(
             "Libellé (optionnel)",
-            value=libelle_value,
+            value="",
             placeholder="Description de l'article",
             key="libelle_input"
         )
     
     with col_emp:
-        # Déterminer l'emplacement en fonction du code
-        if code_article and code_article in ARTICLES_PREDEFINIS:
-            emplacement_value = ARTICLES_PREDEFINIS[code_article]["emplacement"]
-        else:
-            emplacement_value = ""
-        
         emplacement = st.text_input(
             "Emplacement (optionnel)",
-            value=emplacement_value,
+            value="",
             placeholder="Ex: A-12, Rayon 3...",
             key="emplacement_input"
         )
-    
-    # Afficher le message si l'article est trouvé (en dehors des colonnes pour être bien visible)
-    if code_article and code_article in ARTICLES_PREDEFINIS:
-        st.markdown(f"""
-        <div class="article-found">
-            <strong>📝 Article trouvé :</strong> {ARTICLES_PREDEFINIS[code_article]["libelle"]}<br>
-            <strong>📍 Emplacement :</strong> {ARTICLES_PREDEFINIS[code_article]["emplacement"]}
-        </div>
-        """, unsafe_allow_html=True)
     
     st.caption("* Champ obligatoire")
     
@@ -851,7 +932,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v3.0 - Avec scan code-barres")
+    st.caption("📦 Gestionnaire d'Inventaire v4.0 - Avec import Excel")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
