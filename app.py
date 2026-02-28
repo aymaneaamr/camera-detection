@@ -139,7 +139,20 @@ class GestionnairePieces:
             return True
         return False
     
-    def importer_articles_excel(self, df, col_code, col_libelle, col_emplacement):
+    def nettoyer_articles_mal_importes(self):
+        """Supprime les articles qui ont des libellés d'en-tête"""
+        a_supprimer = []
+        for code, data in self.articles.items():
+            libelle = data.get('libelle', '').upper()
+            if 'COLONNE' in libelle or 'CODE ARTICLE' in libelle or 'LIBELLÉ' in libelle or 'EMPLACEMENT' in libelle:
+                a_supprimer.append(code)
+        
+        for code in a_supprimer:
+            del self.articles[code]
+        
+        return len(a_supprimer)
+    
+    def importer_articles_excel(self, df, col_code, col_libelle, col_emplacement, skip_first_row=True):
         """Importe des articles avec sélection manuelle des colonnes"""
         articles_importes = 0
         articles_existants = 0
@@ -157,9 +170,15 @@ class GestionnairePieces:
         add_debug(f"Colonne CODE : '{col_code}'")
         add_debug(f"Colonne LIBELLÉ : '{col_libelle if col_libelle else 'Aucune'}'")
         add_debug(f"Colonne EMPLACEMENT : '{col_emplacement if col_emplacement else 'Aucune'}'")
-        add_debug(f"Nombre de lignes : {len(df)}")
+        add_debug(f"Nombre de lignes totales : {len(df)}")
         
-        for index, row in df.iterrows():
+        # Déterminer l'index de début (0 ou 1)
+        start_idx = 1 if skip_first_row else 0
+        add_debug(f"Ignorer première ligne : {'Oui' if skip_first_row else 'Non'}")
+        add_debug(f"Import à partir de la ligne : {start_idx + 1}")
+        
+        for index in range(start_idx, len(df)):
+            row = df.iloc[index]
             try:
                 # Récupérer le code
                 code_value = row[col_code]
@@ -168,19 +187,30 @@ class GestionnairePieces:
                     continue
                 
                 code = str(code_value).strip()
+                
+                # Vérifier que le code n'est pas un en-tête de colonne
+                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref', 'colonne']:
+                    add_debug(f"  Ligne {index+1}: En-tête détecté, ignorée")
+                    continue
+                
                 add_debug(f"  Ligne {index+1}: Code = '{code}'")
                 
                 # Récupérer le libellé
                 libelle = ""
-                if col_libelle and col_libelle in row and pd.notna(row[col_libelle]):
-                    libelle = str(row[col_libelle]).strip()
-                    add_debug(f"    Libellé = '{libelle[:50]}...'")
+                if col_libelle and col_libelle in row.index and pd.notna(row[col_libelle]):
+                    libelle_value = row[col_libelle]
+                    # Vérifier que ce n'est pas un en-tête
+                    libelle_str = str(libelle_value).strip().lower()
+                    if libelle_str not in ['libellé', 'libelle', 'description', 'designation', 'colonne']:
+                        libelle = str(libelle_value).strip()
+                        add_debug(f"    Libellé = '{libelle[:50]}...'")
                 
                 # Récupérer l'emplacement
                 emplacement = ""
-                if col_emplacement and col_emplacement in row and pd.notna(row[col_emplacement]):
+                if col_emplacement and col_emplacement in row.index and pd.notna(row[col_emplacement]):
                     emp_value = str(row[col_emplacement]).strip()
-                    if emp_value.lower() != 'none' and emp_value != '':
+                    # Vérifier que ce n'est pas un en-tête
+                    if emp_value.lower() not in ['emplacement', 'location', 'position', 'none', 'colonne', ''] and emp_value != '':
                         emplacement = emp_value
                         add_debug(f"    Emplacement = '{emplacement}'")
                 
@@ -499,6 +529,15 @@ with st.sidebar:
     if gestionnaire.articles:
         st.write(f"**{len(gestionnaire.articles)} articles**")
         
+        # Bouton pour nettoyer les articles mal importés
+        if st.button("🧹 Nettoyer les articles mal importés", use_container_width=True):
+            nb_supprimes = gestionnaire.nettoyer_articles_mal_importes()
+            if nb_supprimes > 0:
+                st.success(f"✅ {nb_supprimes} articles supprimés")
+                st.rerun()
+            else:
+                st.info("Aucun article à nettoyer")
+        
         # Afficher tous les articles avec leurs totaux, libellés et emplacements
         for code_article in sorted(gestionnaire.articles.keys()):
             total = gestionnaire.get_total_article(code_article)
@@ -602,29 +641,40 @@ if st.session_state.show_import:
             with col3:
                 col_emplacement = st.selectbox("📍 Colonne pour EMPLACEMENT (optionnel)", ["(Aucune)"] + cols, index=2 if len(cols) > 2 else 0)
             
+            # Option pour ignorer la première ligne
+            skip_first = st.checkbox("Ignorer la première ligne (en-têtes)", value=True, 
+                                   help="Cochez cette case si votre fichier contient des en-têtes de colonnes")
+            
             st.markdown('</div>', unsafe_allow_html=True)
             
             # Afficher un aperçu des données à importer
             st.subheader("Aperçu des données à importer :")
             
-            apercu_data = {
-                'Code': df[col_code].head()
-            }
-            if col_libelle != "(Aucune)":
-                apercu_data['Libellé'] = df[col_libelle].head()
-            if col_emplacement != "(Aucune)":
-                apercu_data['Emplacement'] = df[col_emplacement].head()
+            # Aperçu en ignorant ou non la première ligne
+            start_preview = 1 if skip_first else 0
+            preview_data = {}
             
-            apercu = pd.DataFrame(apercu_data)
+            # Code
+            preview_data['Code'] = df[col_code].iloc[start_preview:start_preview+5].values
+            
+            # Libellé
+            if col_libelle != "(Aucune)":
+                preview_data['Libellé'] = df[col_libelle].iloc[start_preview:start_preview+5].values
+            
+            # Emplacement
+            if col_emplacement != "(Aucune)":
+                preview_data['Emplacement'] = df[col_emplacement].iloc[start_preview:start_preview+5].values
+            
+            apercu = pd.DataFrame(preview_data)
             st.dataframe(apercu)
             
             # Statistiques
-            total_lignes = len(df)
-            codes_non_vides = df[col_code].notna().sum()
+            total_lignes = len(df) - (1 if skip_first else 0)
+            codes_non_vides = df[col_code].iloc[start_preview:].notna().sum()
             
             col_s1, col_s2, col_s3 = st.columns(3)
             with col_s1:
-                st.metric("📊 Total lignes", total_lignes)
+                st.metric("📊 Lignes à importer", total_lignes)
             with col_s2:
                 st.metric("✅ Codes valides", codes_non_vides)
             with col_s3:
@@ -637,7 +687,7 @@ if st.session_state.show_import:
                     col_lib = col_libelle if col_libelle != "(Aucune)" else None
                     col_emp = col_emplacement if col_emplacement != "(Aucune)" else None
                     
-                    importes, existants, erreurs = gestionnaire.importer_articles_excel(df, col_code, col_lib, col_emp)
+                    importes, existants, erreurs = gestionnaire.importer_articles_excel(df, col_code, col_lib, col_emp, skip_first)
                     
                     # Afficher le résultat
                     st.markdown("---")
@@ -665,7 +715,7 @@ if st.session_state.show_import:
                         st.warning("⚠️ Aucun article n'a été importé. Vérifiez que :")
                         st.warning("   - La colonne CODE contient bien des valeurs")
                         st.warning("   - Les codes ne sont pas déjà dans l'inventaire")
-                        st.warning("   - Le fichier n'est pas vide")
+                        st.warning("   - Vous avez bien sélectionné les bonnes colonnes")
         
         except Exception as e:
             st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
@@ -1019,7 +1069,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.2 - Import Excel manuel")
+    st.caption("📦 Gestionnaire d'Inventaire v4.3 - Import Excel avec nettoyage")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
