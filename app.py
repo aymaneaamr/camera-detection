@@ -19,6 +19,42 @@ st.set_page_config(
     layout="wide"
 )
 
+# ==================== JavaScript pour confirmation avant actualisation ====================
+st.markdown("""
+<script>
+// Fonction pour afficher une confirmation avant de quitter/actualiser la page
+window.addEventListener('beforeunload', function (e) {
+    // Vérifier s'il y a des données dans l'inventaire
+    var hasData = %s;
+    
+    if (hasData) {
+        // Message de confirmation standard
+        var confirmationMessage = '⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment continuer ?';
+        
+        e.returnValue = confirmationMessage; // Standard pour la plupart des navigateurs
+        return confirmationMessage; // Pour quelques navigateurs
+    }
+});
+
+// Détecter si l'utilisateur essaie de rafraîchir la page avec F5 ou Ctrl+R
+document.addEventListener('keydown', function(e) {
+    if ((e.key === 'F5') || (e.ctrlKey && e.key === 'r') || (e.ctrlKey && e.key === 'R')) {
+        var hasData = %s;
+        if (hasData) {
+            var confirmRefresh = confirm('⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment actualiser ?');
+            if (!confirmRefresh) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+        }
+    }
+});
+</script>
+""" % ('true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false', 
+       'true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false'), 
+unsafe_allow_html=True)
+
 # CSS personnalisé
 st.markdown("""
 <style>
@@ -91,6 +127,15 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #ffc107;
         margin: 1rem 0;
+    }
+    .warning-box {
+        background: #fff3cd;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 5px;
+        border-left: 5px solid #ffc107;
+        margin: 1rem 0;
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -489,6 +534,15 @@ if 'show_import' not in st.session_state:
 
 gestionnaire = st.session_state.gestionnaire
 
+# Afficher un avertissement si des données sont présentes
+if len(gestionnaire.articles) > 0:
+    st.markdown("""
+    <div class="warning-box">
+        ⚠️ <strong>Attention :</strong> Les données sont stockées temporairement. 
+        Pensez à exporter votre inventaire en Excel avant de quitter ou d'actualiser la page !
+    </div>
+    """, unsafe_allow_html=True)
+
 # Interface principale
 st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
 st.markdown("""
@@ -604,7 +658,7 @@ if st.session_state.show_import:
             st.subheader("Aperçu du fichier original")
             st.dataframe(df.head(10))  # Afficher les 10 premières lignes
             
-            # Sélection des colonnes - SUPPRESSION du cadre jaune "Colonnes disponibles"
+            # Sélection des colonnes
             cols = df.columns.tolist()
             
             # Trouver automatiquement les bonnes colonnes
@@ -1054,7 +1108,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v5.1 - Interface épurée")
+    st.caption("📦 Gestionnaire d'Inventaire v6.0 - Avec protection actualisation")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
