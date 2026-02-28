@@ -92,15 +92,6 @@ st.markdown("""
         border-left: 5px solid #ffc107;
         margin: 1rem 0;
     }
-    .debug-info {
-        background: #2d2d2d;
-        color: #00ff00;
-        padding: 1rem;
-        border-radius: 5px;
-        font-family: monospace;
-        font-size: 0.9rem;
-        margin: 1rem 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,57 +137,46 @@ class GestionnairePieces:
         return len(a_supprimer)
     
     def importer_articles_excel(self, df, col_code, col_libelle, col_emplacement, skip_first_row=True):
-        """Importe des articles avec sélection manuelle des colonnes"""
+        """Importe des articles avec sélection manuelle des colonnes - version sans debug"""
         articles_importes = 0
         articles_existants = 0
         erreurs = 0
         
-        # Créer un conteneur pour les messages de debug
-        debug_container = st.empty()
-        debug_messages = []
-        
-        def add_debug(msg):
-            debug_messages.append(msg)
-            debug_container.markdown(f'<div class="debug-info">{"<br>".join(debug_messages)}</div>', unsafe_allow_html=True)
-        
-        add_debug("🔍 Début de l'import...")
-        add_debug(f"Colonne CODE : '{col_code}'")
-        add_debug(f"Colonne LIBELLÉ : '{col_libelle if col_libelle else 'Aucune'}'")
-        add_debug(f"Colonne EMPLACEMENT : '{col_emplacement if col_emplacement else 'Aucune'}'")
-        add_debug(f"Nombre de lignes totales : {len(df)}")
+        # Barre de progression simple
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
         # Déterminer l'index de début (0 ou 1)
         start_idx = 1 if skip_first_row else 0
-        add_debug(f"Ignorer première ligne : {'Oui' if skip_first_row else 'Non'}")
-        add_debug(f"Import à partir de la ligne : {start_idx + 1}")
+        total_lignes = len(df) - start_idx
         
         for index in range(start_idx, len(df)):
+            # Mettre à jour la progression
+            progression = (index - start_idx + 1) / total_lignes
+            progress_bar.progress(progression)
+            status_text.text(f"Import en cours... {index - start_idx + 1}/{total_lignes}")
+            
             row = df.iloc[index]
             try:
                 # Récupérer le code
                 code_value = row[col_code]
                 if pd.isna(code_value) or str(code_value).strip() == '':
-                    add_debug(f"  Ligne {index+1}: Code vide, ignorée")
                     continue
                 
                 code = str(code_value).strip()
                 
                 # Vérifier que le code n'est pas un en-tête de colonne
                 if code.lower() in ['code article', 'code', 'article', 'réf', 'ref']:
-                    add_debug(f"  Ligne {index+1}: En-tête détecté, ignorée")
                     continue
                 
-                add_debug(f"  Ligne {index+1}: Code = '{code}'")
-                
-                # Récupérer le libellé (dans la colonne libellé)
+                # Récupérer le libellé
                 libelle = ""
                 if col_libelle and col_libelle != "(Aucune)" and col_libelle in row.index:
                     libelle_value = row[col_libelle]
                     if pd.notna(libelle_value):
                         libelle = str(libelle_value).strip()
-                        add_debug(f"    Libellé = '{libelle[:50]}...'")
                 
-                # Récupérer l'emplacement (dans la colonne emplacement)
+                # Récupérer l'emplacement
                 emplacement = ""
                 if col_emplacement and col_emplacement != "(Aucune)" and col_emplacement in row.index:
                     emp_value = row[col_emplacement]
@@ -204,7 +184,6 @@ class GestionnairePieces:
                         emp_str = str(emp_value).strip()
                         if emp_str.lower() not in ['none', 'nan', '']:
                             emplacement = emp_str
-                            add_debug(f"    Emplacement = '{emplacement}'")
                 
                 # Créer l'article
                 if code and code not in self.articles:
@@ -215,17 +194,17 @@ class GestionnairePieces:
                         'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     articles_importes += 1
-                    add_debug(f"    ✅ Article créé avec succès")
                 elif code in self.articles:
                     articles_existants += 1
-                    add_debug(f"    ⚠️ Article déjà existant")
-                    
+                        
             except Exception as e:
                 erreurs += 1
-                add_debug(f"    ❌ Erreur : {str(e)}")
                 continue
         
-        add_debug(f"✅ Import terminé : {articles_importes} importés, {articles_existants} existants, {erreurs} erreurs")
+        # Nettoyer les éléments de progression
+        progress_bar.empty()
+        status_text.empty()
+        
         return articles_importes, articles_existants, erreurs
     
     def ajouter_photo_article(self, code_article, frame_original, frame_analyse, nb_pieces):
@@ -509,7 +488,7 @@ Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 4. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale avec la liste des articles - CORRIGÉE avec un seul bouton d'import
+# Barre latérale avec la liste des articles
 with st.sidebar:
     st.header("📋 Articles en inventaire")
     
@@ -592,7 +571,6 @@ with st.sidebar:
                 st.rerun()
     else:
         st.info("Aucun article pour le moment")
-        # Pas de bouton supplémentaire ici - on a déjà le bouton d'import en haut
 
 # Section d'import Excel
 if st.session_state.show_import:
@@ -655,13 +633,6 @@ if st.session_state.show_import:
             
             apercu = pd.DataFrame(preview_data)
             st.dataframe(apercu)
-            
-            # Afficher des statistiques sur les colonnes sélectionnées
-            st.info(f"📊 Colonne CODE : '{col_code}' - {df[col_code].nunique()} valeurs uniques")
-            if col_libelle != "(Aucune)":
-                st.info(f"📝 Colonne LIBELLÉ : '{col_libelle}' - {df[col_libelle].nunique()} valeurs uniques")
-            if col_emplacement != "(Aucune)":
-                st.info(f"📍 Colonne EMPLACEMENT : '{col_emplacement}' - {df[col_emplacement].nunique()} valeurs uniques")
             
             # Statistiques
             total_lignes = len(df) - (1 if skip_first else 0)
@@ -1064,7 +1035,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.5 - Interface simplifiée")
+    st.caption("📦 Gestionnaire d'Inventaire v4.6 - Import simplifié")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
