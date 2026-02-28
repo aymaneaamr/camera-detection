@@ -19,41 +19,56 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==================== JavaScript pour confirmation avant actualisation ====================
-st.markdown("""
-<script>
-// Fonction pour afficher une confirmation avant de quitter/actualiser la page
-window.addEventListener('beforeunload', function (e) {
-    // Vérifier s'il y a des données dans l'inventaire
-    var hasData = %s;
-    
-    if (hasData) {
-        // Message de confirmation standard
-        var confirmationMessage = '⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment continuer ?';
-        
-        e.returnValue = confirmationMessage; // Standard pour la plupart des navigateurs
-        return confirmationMessage; // Pour quelques navigateurs
+# ==================== Composant HTML avec JavaScript pour confirmation ====================
+def add_refresh_confirmation():
+    """Ajoute un composant HTML avec JavaScript pour confirmer avant actualisation"""
+    refresh_html = """
+    <div id="refresh-confirmation" style="display:none;"></div>
+    <script>
+    // Fonction pour vérifier si des données existent
+    function hasData() {
+        return %s;
     }
-});
-
-// Détecter si l'utilisateur essaie de rafraîchir la page avec F5 ou Ctrl+R
-document.addEventListener('keydown', function(e) {
-    if ((e.key === 'F5') || (e.ctrlKey && e.key === 'r') || (e.ctrlKey && e.key === 'R')) {
-        var hasData = %s;
-        if (hasData) {
-            var confirmRefresh = confirm('⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment actualiser ?');
-            if (!confirmRefresh) {
+    
+    // Confirmation avant de quitter/actualiser la page
+    window.addEventListener('beforeunload', function (e) {
+        if (hasData()) {
+            var confirmationMessage = '⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment continuer ?';
+            e.returnValue = confirmationMessage;
+            return confirmationMessage;
+        }
+    });
+    
+    // Intercepter F5 et Ctrl+R
+    document.addEventListener('keydown', function(e) {
+        if (hasData()) {
+            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r') || (e.ctrlKey && e.key === 'R')) {
                 e.preventDefault();
-                e.stopPropagation();
-                return false;
+                var confirmRefresh = confirm('⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment actualiser ?');
+                if (confirmRefresh) {
+                    window.location.reload();
+                }
             }
         }
-    }
-});
-</script>
-""" % ('true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false', 
-       'true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false'), 
-unsafe_allow_html=True)
+    });
+    
+    // Vérification périodique pour s'assurer que le script reste actif
+    setInterval(function() {
+        if (typeof hasData === 'function') {
+            // Le script est toujours actif
+        }
+    }, 1000);
+    </script>
+    """
+    
+    # Déterminer s'il y a des données
+    has_data = 'true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false'
+    
+    # Injecter le HTML avec JavaScript
+    st.components.v1.html(refresh_html % has_data, height=0)
+
+# Appeler la fonction pour ajouter la confirmation
+add_refresh_confirmation()
 
 # CSS personnalisé
 st.markdown("""
@@ -1108,7 +1123,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v6.0 - Avec protection actualisation")
+    st.caption("📦 Gestionnaire d'Inventaire v6.1 - Protection actualisation améliorée")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
