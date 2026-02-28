@@ -11,6 +11,9 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from pyzbar.pyzbar import decode
 import re
+import sqlite3
+import os
+import pickle
 
 # ==================== Configuration de la page ====================
 st.set_page_config(
@@ -19,56 +22,147 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==================== Composant HTML avec JavaScript pour confirmation ====================
+# ==================== Fonctions de persistance SQLite ====================
+
+def init_database():
+    """Initialise la base de données SQLite"""
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    
+    # Table des articles
+    c.execute('''CREATE TABLE IF NOT EXISTS articles
+                 (code TEXT PRIMARY KEY,
+                  libelle TEXT,
+                  emplacement TEXT,
+                  date_creation TEXT)''')
+    
+    # Table des photos
+    c.execute('''CREATE TABLE IF NOT EXISTS photos
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  code_article TEXT,
+                  timestamp TEXT,
+                  nb_pieces INTEGER,
+                  image_originale TEXT,
+                  image_analyse TEXT,
+                  FOREIGN KEY (code_article) REFERENCES articles(code))''')
+    
+    conn.commit()
+    conn.close()
+
+def charger_donnees():
+    """Charge les données depuis SQLite"""
+    gestionnaire = GestionnairePieces()
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    
+    # Charger les articles
+    c.execute("SELECT code, libelle, emplacement, date_creation FROM articles")
+    articles = c.fetchall()
+    
+    for code, libelle, emplacement, date_creation in articles:
+        gestionnaire.articles[code] = {
+            'libelle': libelle,
+            'photos': [],
+            'emplacement': emplacement,
+            'date_creation': date_creation
+        }
+    
+    # Charger les photos
+    c.execute("SELECT code_article, timestamp, nb_pieces, image_originale, image_analyse, id FROM photos ORDER BY timestamp")
+    photos = c.fetchall()
+    
+    for code_article, timestamp, nb_pieces, img_originale, img_analyse, photo_id in photos:
+        if code_article in gestionnaire.articles:
+            photo_data = {
+                'timestamp': timestamp,
+                'nb_pieces': nb_pieces,
+                'image_originale': img_originale,
+                'image_analyse': img_analyse,
+                'id': len(gestionnaire.articles[code_article]['photos'])
+            }
+            gestionnaire.articles[code_article]['photos'].append(photo_data)
+    
+    conn.close()
+    return gestionnaire
+
+def sauvegarder_article(code, libelle, emplacement, date_creation):
+    """Sauvegarde un article dans SQLite"""
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO articles (code, libelle, emplacement, date_creation) VALUES (?, ?, ?, ?)",
+              (code, libelle, emplacement, date_creation))
+    conn.commit()
+    conn.close()
+
+def sauvegarder_photo(code_article, timestamp, nb_pieces, image_originale, image_analyse):
+    """Sauvegarde une photo dans SQLite"""
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO photos (code_article, timestamp, nb_pieces, image_originale, image_analyse) VALUES (?, ?, ?, ?, ?)",
+              (code_article, timestamp, nb_pieces, image_originale, image_analyse))
+    conn.commit()
+    conn.close()
+
+def supprimer_article_db(code):
+    """Supprime un article et ses photos de la base"""
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM photos WHERE code_article = ?", (code,))
+    c.execute("DELETE FROM articles WHERE code = ?", (code,))
+    conn.commit()
+    conn.close()
+
+def supprimer_photo_db(photo_id):
+    """Supprime une photo de la base"""
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
+    conn.commit()
+    conn.close()
+
+def get_photo_db_id(code_article, timestamp):
+    """Récupère l'ID SQLite d'une photo à partir de son timestamp"""
+    conn = sqlite3.connect('inventaire.db')
+    c = conn.cursor()
+    c.execute("SELECT id FROM photos WHERE code_article = ? AND timestamp = ?", (code_article, timestamp))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+# ==================== JavaScript pour confirmation avant actualisation ====================
 def add_refresh_confirmation():
-    """Ajoute un composant HTML avec JavaScript pour confirmer avant actualisation"""
-    refresh_html = """
+    has_data = 'true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false'
+    refresh_html = f"""
     <div id="refresh-confirmation" style="display:none;"></div>
     <script>
-    // Fonction pour vérifier si des données existent
-    function hasData() {
-        return %s;
-    }
-    
-    // Confirmation avant de quitter/actualiser la page
-    window.addEventListener('beforeunload', function (e) {
-        if (hasData()) {
+    function hasData() {{
+        return {has_data};
+    }}
+    window.addEventListener('beforeunload', function (e) {{
+        if (hasData()) {{
             var confirmationMessage = '⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment continuer ?';
             e.returnValue = confirmationMessage;
             return confirmationMessage;
-        }
-    });
-    
-    // Intercepter F5 et Ctrl+R
-    document.addEventListener('keydown', function(e) {
-        if (hasData()) {
-            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r') || (e.ctrlKey && e.key === 'R')) {
+        }}
+    }});
+    document.addEventListener('keydown', function(e) {{
+        if (hasData()) {{
+            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r') || (e.ctrlKey && e.key === 'R')) {{
                 e.preventDefault();
                 var confirmRefresh = confirm('⚠️ Attention ! Si vous actualisez la page, toutes les données non exportées seront perdues.\\n\\nVoulez-vous vraiment actualiser ?');
-                if (confirmRefresh) {
+                if (confirmRefresh) {{
                     window.location.reload();
-                }
-            }
-        }
-    });
-    
-    // Vérification périodique pour s'assurer que le script reste actif
-    setInterval(function() {
-        if (typeof hasData === 'function') {
-            // Le script est toujours actif
-        }
-    }, 1000);
+                }}
+            }}
+        }}
+    }});
+    setInterval(function() {{
+        if (typeof hasData === 'function') {{
+        }}
+    }}, 1000);
     </script>
     """
-    
-    # Déterminer s'il y a des données
-    has_data = 'true' if 'gestionnaire' in st.session_state and len(st.session_state.gestionnaire.articles) > 0 else 'false'
-    
-    # Injecter le HTML avec JavaScript
-    st.components.v1.html(refresh_html % has_data, height=0)
-
-# Appeler la fonction pour ajouter la confirmation
-add_refresh_confirmation()
+    st.components.v1.html(refresh_html, height=0)
 
 # CSS personnalisé
 st.markdown("""
@@ -152,6 +246,15 @@ st.markdown("""
         margin: 1rem 0;
         font-weight: bold;
     }
+    .database-info {
+        background: #d1ecf1;
+        color: #0c5460;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border-left: 5px solid #17a2b8;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -174,12 +277,15 @@ class GestionnairePieces:
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
         """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
+            date_creation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.articles[code_article] = {
                 'libelle': libelle,
                 'photos': [],
                 'emplacement': emplacement,
-                'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                'date_creation': date_creation
             }
+            # Sauvegarder dans la base de données
+            sauvegarder_article(code_article, libelle, emplacement, date_creation)
             return True
         return False
     
@@ -192,6 +298,8 @@ class GestionnairePieces:
                 a_supprimer.append(code)
         
         for code in a_supprimer:
+            # Supprimer de la base de données
+            supprimer_article_db(code)
             del self.articles[code]
         
         return len(a_supprimer)
@@ -258,12 +366,15 @@ class GestionnairePieces:
                 
                 # Créer l'article
                 if code and code not in self.articles:
+                    date_creation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     self.articles[code] = {
                         'libelle': libelle,
                         'photos': [],
                         'emplacement': emplacement,
-                        'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        'date_creation': date_creation
                     }
+                    # Sauvegarder dans la base de données
+                    sauvegarder_article(code, libelle, emplacement, date_creation)
                     articles_importes += 1
                 elif code in self.articles:
                     articles_existants += 1
@@ -287,15 +398,22 @@ class GestionnairePieces:
             _, buffer_original = cv2.imencode('.jpg', frame_original)
             _, buffer_analyse = cv2.imencode('.jpg', frame_analyse)
             
+            img_originale_b64 = base64.b64encode(buffer_original).decode('utf-8')
+            img_analyse_b64 = base64.b64encode(buffer_analyse).decode('utf-8')
+            
             photo_data = {
                 'timestamp': timestamp,
                 'nb_pieces': nb_pieces,
-                'image_originale': base64.b64encode(buffer_original).decode('utf-8'),
-                'image_analyse': base64.b64encode(buffer_analyse).decode('utf-8'),
+                'image_originale': img_originale_b64,
+                'image_analyse': img_analyse_b64,
                 'id': len(self.articles[code_article]['photos'])
             }
             
             self.articles[code_article]['photos'].append(photo_data)
+            
+            # Sauvegarder dans la base de données
+            sauvegarder_photo(code_article, timestamp, nb_pieces, img_originale_b64, img_analyse_b64)
+            
             return True
         return False
     
@@ -326,7 +444,17 @@ class GestionnairePieces:
     def supprimer_photo(self, code_article, photo_id):
         """Supprime une photo d'un article"""
         if code_article in self.articles and 0 <= photo_id < len(self.articles[code_article]['photos']):
+            # Récupérer le timestamp pour trouver l'ID SQLite
+            timestamp = self.articles[code_article]['photos'][photo_id]['timestamp']
+            db_id = get_photo_db_id(code_article, timestamp)
+            
+            # Supprimer de la base de données
+            if db_id:
+                supprimer_photo_db(db_id)
+            
+            # Supprimer de la mémoire
             del self.articles[code_article]['photos'][photo_id]
+            
             # Réindexer les IDs
             for i, photo in enumerate(self.articles[code_article]['photos']):
                 photo['id'] = i
@@ -336,6 +464,10 @@ class GestionnairePieces:
     def supprimer_article(self, code_article):
         """Supprime complètement un article"""
         if code_article in self.articles:
+            # Supprimer de la base de données
+            supprimer_article_db(code_article)
+            
+            # Supprimer de la mémoire
             del self.articles[code_article]
             return True
         return False
@@ -437,6 +569,9 @@ class GestionnairePieces:
     
     def reinitialiser_tout(self):
         """Réinitialise complètement l'inventaire"""
+        # Supprimer le fichier de base de données
+        if os.path.exists('inventaire.db'):
+            os.remove('inventaire.db')
         self.articles = {}
 
 # Fonction pour détecter et lire les codes-barres
@@ -531,9 +666,13 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
+# Initialisation de la base de données
+init_database()
+
 # Initialisation
 if 'gestionnaire' not in st.session_state:
-    st.session_state.gestionnaire = GestionnairePieces()
+    # Charger les données depuis SQLite
+    st.session_state.gestionnaire = charger_donnees()
 if 'page' not in st.session_state:
     st.session_state.page = "saisie"
 if 'article_selectionne' not in st.session_state:
@@ -549,6 +688,9 @@ if 'show_import' not in st.session_state:
 
 gestionnaire = st.session_state.gestionnaire
 
+# Ajouter la confirmation d'actualisation
+add_refresh_confirmation()
+
 # Afficher un avertissement si des données sont présentes
 if len(gestionnaire.articles) > 0:
     st.markdown("""
@@ -557,6 +699,13 @@ if len(gestionnaire.articles) > 0:
         Pensez à exporter votre inventaire en Excel avant de quitter ou d'actualiser la page !
     </div>
     """, unsafe_allow_html=True)
+
+# Afficher l'information de persistance
+st.markdown("""
+<div class="database-info">
+    💾 <strong>Persistance active :</strong> Les données sont automatiquement sauvegardées dans 'inventaire.db'
+</div>
+""", unsafe_allow_html=True)
 
 # Interface principale
 st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
@@ -1123,7 +1272,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v6.1 - Protection actualisation améliorée")
+    st.caption("📦 Gestionnaire d'Inventaire v7.0 - Avec persistance SQLite")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
