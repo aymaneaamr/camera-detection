@@ -92,6 +92,15 @@ st.markdown("""
         border-left: 5px solid #0066cc;
         margin: 1rem 0;
     }
+    .debug-info {
+        background: #2d2d2d;
+        color: #00ff00;
+        padding: 1rem;
+        border-radius: 5px;
+        font-family: monospace;
+        font-size: 0.9rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -124,119 +133,115 @@ class GestionnairePieces:
         return False
     
     def importer_articles_excel(self, df):
-        """Importe des articles à partir d'un DataFrame Excel avec détection intelligente des colonnes"""
+        """Importe des articles à partir d'un DataFrame Excel avec détection robuste"""
         articles_importes = 0
         articles_existants = 0
         erreurs = 0
         
-        # Nettoyer les noms de colonnes
-        df.columns = [str(col).strip().lower() for col in df.columns]
+        # Créer un conteneur pour les messages de debug
+        debug_container = st.empty()
+        debug_messages = []
         
-        # Dictionnaire pour stocker les colonnes trouvées
-        colonnes_trouvees = {
+        def add_debug(msg):
+            debug_messages.append(msg)
+            debug_container.markdown(f'<div class="debug-info">{"<br>".join(debug_messages)}</div>', unsafe_allow_html=True)
+        
+        add_debug("🔍 Début de l'import...")
+        add_debug(f"Colonnes brutes : {df.columns.tolist()}")
+        
+        # Nettoyer les noms de colonnes
+        df.columns = [str(col).strip() for col in df.columns]
+        add_debug(f"Colonnes nettoyées : {df.columns.tolist()}")
+        
+        # Initialiser le mapping
+        mapping = {
             'code': None,
             'libelle': None,
             'emplacement': None
         }
         
-        # Mots-clés pour chaque type de colonne
-        mots_cles = {
-            'code': ['code', 'article', 'réf', 'ref', 'référence', 'reference', 'identifiant', 'id'],
-            'libelle': ['libellé', 'libelle', 'description', 'designation', 'désignation', 'nom', 'name'],
-            'emplacement': ['emplacement', 'location', 'position', 'rack', 'etagère', 'etagere', 'place', 'stockage']
-        }
-        
-        # Chercher les colonnes qui correspondent
+        # Parcourir toutes les colonnes pour trouver les correspondances
         for col in df.columns:
             col_lower = col.lower()
+            add_debug(f"Analyse de la colonne : '{col}'")
             
-            # Ignorer les colonnes 'unnamed'
-            if 'unnamed' in col_lower:
-                continue
+            # Recherche code article
+            if mapping['code'] is None:
+                if any(keyword in col_lower for keyword in ['code', 'article', 'réf', 'ref']):
+                    mapping['code'] = col
+                    add_debug(f"  ✅ Code article trouvé : '{col}'")
             
-            # Chercher pour le code
-            if colonnes_trouvees['code'] is None:
-                for mot in mots_cles['code']:
-                    if mot in col_lower:
-                        colonnes_trouvees['code'] = col
-                        break
+            # Recherche libellé
+            if mapping['libelle'] is None:
+                if any(keyword in col_lower for keyword in ['libellé', 'libelle', 'description', 'designation', 'désignation', 'nom']):
+                    mapping['libelle'] = col
+                    add_debug(f"  ✅ Libellé trouvé : '{col}'")
             
-            # Chercher pour le libellé
-            if colonnes_trouvees['libelle'] is None:
-                for mot in mots_cles['libelle']:
-                    if mot in col_lower:
-                        colonnes_trouvees['libelle'] = col
-                        break
-            
-            # Chercher pour l'emplacement
-            if colonnes_trouvees['emplacement'] is None:
-                for mot in mots_cles['emplacement']:
-                    if mot in col_lower:
-                        colonnes_trouvees['emplacement'] = col
-                        break
+            # Recherche emplacement
+            if mapping['emplacement'] is None:
+                if any(keyword in col_lower for keyword in ['emplacement', 'location', 'position', 'rack', 'place']):
+                    mapping['emplacement'] = col
+                    add_debug(f"  ✅ Emplacement trouvé : '{col}'")
         
-        # Si on n'a pas trouvé de colonne libellé, prendre la 2ème colonne utile
-        if colonnes_trouvees['libelle'] is None:
-            colonnes_utiles = [col for col in df.columns if 'unnamed' not in col.lower()]
-            if len(colonnes_utiles) >= 2:
-                colonnes_trouvees['libelle'] = colonnes_utiles[1]
+        # Si certaines colonnes n'ont pas été trouvées, utiliser l'ordre
+        colonnes_utiles = [col for col in df.columns if 'unnamed' not in col.lower()]
         
-        # Si on n'a pas trouvé de colonne emplacement, prendre la 3ème colonne utile
-        if colonnes_trouvees['emplacement'] is None:
-            colonnes_utiles = [col for col in df.columns if 'unnamed' not in col.lower()]
-            if len(colonnes_utiles) >= 3:
-                colonnes_trouvees['emplacement'] = colonnes_utiles[2]
+        if mapping['code'] is None and len(colonnes_utiles) > 0:
+            mapping['code'] = colonnes_utiles[0]
+            add_debug(f"  ⚠️ Code article par défaut : '{colonnes_utiles[0]}'")
         
-        # Vérifier si on a trouvé la colonne code (obligatoire)
-        if colonnes_trouvees['code'] is None:
-            # Prendre la première colonne non-unnamed comme code par défaut
-            colonnes_utiles = [col for col in df.columns if 'unnamed' not in col.lower()]
-            if colonnes_utiles:
-                colonnes_trouvees['code'] = colonnes_utiles[0]
-            else:
-                st.error("❌ Impossible de trouver une colonne pour le code article")
-                return 0, 0, 0
+        if mapping['libelle'] is None and len(colonnes_utiles) > 1:
+            mapping['libelle'] = colonnes_utiles[1]
+            add_debug(f"  ⚠️ Libellé par défaut : '{colonnes_utiles[1]}'")
         
-        # Afficher les correspondances trouvées
-        st.markdown('<div class="column-match">', unsafe_allow_html=True)
-        st.success("✅ Correspondances des colonnes :")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.info(f"📌 **Code article**\n\n`{colonnes_trouvees['code']}`")
-        with col2:
-            if colonnes_trouvees['libelle']:
-                st.info(f"📝 **Libellé**\n\n`{colonnes_trouvees['libelle']}`")
-            else:
-                st.warning("⚠️ **Libellé**\n\nNon trouvé")
-        with col3:
-            if colonnes_trouvees['emplacement']:
-                st.info(f"📍 **Emplacement**\n\n`{colonnes_trouvees['emplacement']}`")
-            else:
-                st.warning("⚠️ **Emplacement**\n\nNon trouvé")
-        st.markdown('</div>', unsafe_allow_html=True)
+        if mapping['emplacement'] is None and len(colonnes_utiles) > 2:
+            mapping['emplacement'] = colonnes_utiles[2]
+            add_debug(f"  ⚠️ Emplacement par défaut : '{colonnes_utiles[2]}'")
         
-        # Parcourir le DataFrame
+        # Afficher le mapping final
+        add_debug("📊 Mapping final :")
+        add_debug(f"  - Code : {mapping['code']}")
+        add_debug(f"  - Libellé : {mapping['libelle']}")
+        add_debug(f"  - Emplacement : {mapping['emplacement']}")
+        
+        # Vérifier qu'on a au moins un code
+        if mapping['code'] is None:
+            st.error("❌ Impossible de trouver une colonne pour le code article")
+            return 0, 0, 0
+        
+        # Parcourir les lignes du DataFrame
+        add_debug(f"📝 Traitement de {len(df)} lignes...")
+        
         for index, row in df.iterrows():
             try:
-                # Ignorer les lignes avec code vide
-                if pd.isna(row[colonnes_trouvees['code']]) or str(row[colonnes_trouvees['code']]).strip() == '':
+                # Récupérer le code
+                code_value = row[mapping['code']]
+                if pd.isna(code_value) or str(code_value).strip() == '':
+                    add_debug(f"  Ligne {index+1}: Code vide, ignorée")
                     continue
                 
-                code = str(row[colonnes_trouvees['code']]).strip()
+                code = str(code_value).strip()
+                add_debug(f"  Ligne {index+1}: Code = '{code}'")
                 
                 # Récupérer le libellé
                 libelle = ""
-                if colonnes_trouvees['libelle'] and colonnes_trouvees['libelle'] in row:
-                    if pd.notna(row[colonnes_trouvees['libelle']]):
-                        libelle = str(row[colonnes_trouvees['libelle']]).strip()
+                if mapping['libelle'] and mapping['libelle'] in row:
+                    libelle_value = row[mapping['libelle']]
+                    if pd.notna(libelle_value):
+                        libelle = str(libelle_value).strip()
+                        add_debug(f"    Libellé = '{libelle[:50]}...'")
                 
                 # Récupérer l'emplacement
                 emplacement = ""
-                if colonnes_trouvees['emplacement'] and colonnes_trouvees['emplacement'] in row:
-                    if pd.notna(row[colonnes_trouvees['emplacement']]):
-                        emplacement = str(row[colonnes_trouvees['emplacement']]).strip()
+                if mapping['emplacement'] and mapping['emplacement'] in row:
+                    emp_value = row[mapping['emplacement']]
+                    if pd.notna(emp_value):
+                        emp_str = str(emp_value).strip()
+                        if emp_str.lower() != 'none' and emp_str != '':
+                            emplacement = emp_str
+                            add_debug(f"    Emplacement = '{emplacement}'")
                 
-                # Créer l'article s'il n'existe pas
+                # Créer l'article
                 if code and code not in self.articles:
                     self.articles[code] = {
                         'libelle': libelle,
@@ -245,13 +250,17 @@ class GestionnairePieces:
                         'date_creation': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     articles_importes += 1
+                    add_debug(f"    ✅ Article créé avec succès")
                 elif code in self.articles:
                     articles_existants += 1
+                    add_debug(f"    ⚠️ Article déjà existant")
                     
             except Exception as e:
                 erreurs += 1
+                add_debug(f"    ❌ Erreur : {str(e)}")
                 continue
         
+        add_debug(f"✅ Import terminé : {articles_importes} importés, {articles_existants} existants, {erreurs} erreurs")
         return articles_importes, articles_existants, erreurs
     
     def ajouter_photo_article(self, code_article, frame_original, frame_analyse, nb_pieces):
@@ -544,6 +553,8 @@ with st.sidebar:
         st.session_state.show_import = True
     
     if gestionnaire.articles:
+        st.write(f"**{len(gestionnaire.articles)} articles**")
+        
         # Afficher tous les articles avec leurs totaux, libellés et emplacements
         for code_article in sorted(gestionnaire.articles.keys()):
             total = gestionnaire.get_total_article(code_article)
@@ -557,6 +568,7 @@ with st.sidebar:
                     if st.button(f"📦 {code_article}", key=f"select_{code_article}", use_container_width=True):
                         st.session_state.article_selectionne = code_article
                         st.session_state.page = "details"
+                        st.rerun()
                 with col2:
                     st.write(f"**{total}**")
             
@@ -642,8 +654,8 @@ if st.session_state.show_import:
             
             # Afficher les colonnes
             st.subheader("Colonnes détectées")
-            cols_df = df.columns.tolist()
-            st.write(cols_df)
+            for i, col in enumerate(df.columns):
+                st.write(f"{i} : **{col}**")
             
             # Bouton d'import
             if st.button("✅ Confirmer l'import", use_container_width=True):
@@ -667,6 +679,8 @@ if st.session_state.show_import:
                         st.balloons()
                         st.session_state.show_import = False
                         st.rerun()
+                    else:
+                        st.warning("⚠️ Aucun article n'a été importé. Vérifiez les messages de debug ci-dessus.")
         
         except Exception as e:
             st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
@@ -1020,7 +1034,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.0 - Avec import Excel amélioré")
+    st.caption("📦 Gestionnaire d'Inventaire v4.1 - Import Excel robuste")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
