@@ -613,7 +613,7 @@ if st.session_state.show_import:
             
             st.markdown('</div>', unsafe_allow_html=True)
             
-            # Afficher un aperçu des données à importer
+            # Afficher un aperçu des données à importer (UN SEUL tableau)
             st.subheader("Aperçu des données à importer :")
             
             # Aperçu en ignorant ou non la première ligne
@@ -1035,7 +1035,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.6 - Import simplifié")
+    st.caption("📦 Gestionnaire d'Inventaire v4.7 - Version finale")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
