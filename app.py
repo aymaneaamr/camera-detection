@@ -137,7 +137,7 @@ class GestionnairePieces:
         return len(a_supprimer)
     
     def importer_articles_excel(self, df, col_code, col_libelle, col_emplacement, skip_first_row=True):
-        """Importe des articles avec sélection manuelle des colonnes - version sans debug"""
+        """Importe des articles avec sélection manuelle des colonnes - version complète"""
         articles_importes = 0
         articles_existants = 0
         erreurs = 0
@@ -149,6 +149,9 @@ class GestionnairePieces:
         # Déterminer l'index de début (0 ou 1)
         start_idx = 1 if skip_first_row else 0
         total_lignes = len(df) - start_idx
+        
+        # Dictionnaire pour suivre les codes déjà vus (pour éviter les doublons dans le fichier)
+        codes_vus = set()
         
         for index in range(start_idx, len(df)):
             # Mettre à jour la progression
@@ -166,8 +169,13 @@ class GestionnairePieces:
                 code = str(code_value).strip()
                 
                 # Vérifier que le code n'est pas un en-tête de colonne
-                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref']:
+                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref', '0', '1', '2', '3', '4']:
                     continue
+                
+                # Éviter les doublons dans le même fichier
+                if code in codes_vus:
+                    continue
+                codes_vus.add(code)
                 
                 # Récupérer le libellé
                 libelle = ""
@@ -175,6 +183,9 @@ class GestionnairePieces:
                     libelle_value = row[col_libelle]
                     if pd.notna(libelle_value):
                         libelle = str(libelle_value).strip()
+                        # Nettoyer les valeurs "None"
+                        if libelle.lower() == 'none':
+                            libelle = ""
                 
                 # Récupérer l'emplacement
                 emplacement = ""
@@ -591,21 +602,32 @@ if st.session_state.show_import:
             
             # Afficher un aperçu du fichier original
             st.subheader("Aperçu du fichier original")
-            st.dataframe(df.head())
+            st.dataframe(df.head(10))  # Afficher les 10 premières lignes
             
             # Afficher les colonnes disponibles
             st.markdown('<div class="selection-box">', unsafe_allow_html=True)
             st.subheader("📌 Sélection des colonnes")
             
             cols = df.columns.tolist()
+            st.write("Colonnes disponibles :", cols)
+            
+            # Trouver automatiquement les bonnes colonnes
+            default_code_index = 0
+            default_libelle_index = 1
+            default_emplacement_index = 2
+            
+            for i, col in enumerate(cols):
+                col_lower = col.lower()
+                if 'emplacement' in col_lower:
+                    default_emplacement_index = i + 1  # +1 car on a "(Aucune)" en première position
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                col_code = st.selectbox("📌 Colonne pour CODE article *", cols, index=0 if cols else 0)
+                col_code = st.selectbox("📌 Colonne pour CODE article *", cols, index=default_code_index)
             with col2:
-                col_libelle = st.selectbox("📝 Colonne pour LIBELLÉ *", ["(Aucune)"] + cols, index=1 if len(cols) > 1 else 0)
+                col_libelle = st.selectbox("📝 Colonne pour LIBELLÉ *", ["(Aucune)"] + cols, index=default_libelle_index + 1)
             with col3:
-                col_emplacement = st.selectbox("📍 Colonne pour EMPLACEMENT (optionnel)", ["(Aucune)"] + cols, index=2 if len(cols) > 2 else 0)
+                col_emplacement = st.selectbox("📍 Colonne pour EMPLACEMENT (optionnel)", ["(Aucune)"] + cols, index=default_emplacement_index)
             
             # Option pour ignorer la première ligne
             skip_first = st.checkbox("Ignorer la première ligne (en-têtes)", value=True, 
@@ -613,37 +635,41 @@ if st.session_state.show_import:
             
             st.markdown('</div>', unsafe_allow_html=True)
             
-            # Afficher un aperçu des données à importer (UN SEUL tableau)
+            # Afficher un aperçu des données à importer (TOUTES les lignes)
             st.subheader("Aperçu des données à importer :")
             
             # Aperçu en ignorant ou non la première ligne
             start_preview = 1 if skip_first else 0
             preview_data = {}
             
-            # Code
-            preview_data['Code'] = df[col_code].iloc[start_preview:start_preview+5].values
+            # Code - prendre toutes les lignes
+            preview_data['Code'] = df[col_code].iloc[start_preview:].values
             
             # Libellé
             if col_libelle != "(Aucune)":
-                preview_data['Libellé'] = df[col_libelle].iloc[start_preview:start_preview+5].values
+                preview_data['Libellé'] = df[col_libelle].iloc[start_preview:].values
             
             # Emplacement
             if col_emplacement != "(Aucune)":
-                preview_data['Emplacement'] = df[col_emplacement].iloc[start_preview:start_preview+5].values
+                preview_data['Emplacement'] = df[col_emplacement].iloc[start_preview:].values
             
+            # Créer le DataFrame d'aperçu
             apercu = pd.DataFrame(preview_data)
             st.dataframe(apercu)
             
-            # Statistiques
+            # Statistiques détaillées
             total_lignes = len(df) - (1 if skip_first else 0)
             codes_non_vides = df[col_code].iloc[start_preview:].notna().sum()
+            codes_uniques = df[col_code].iloc[start_preview:].nunique()
             
-            col_s1, col_s2, col_s3 = st.columns(3)
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
             with col_s1:
-                st.metric("📊 Lignes à importer", total_lignes)
+                st.metric("📊 Lignes totales", total_lignes)
             with col_s2:
                 st.metric("✅ Codes valides", codes_non_vides)
             with col_s3:
+                st.metric("🆔 Codes uniques", codes_uniques)
+            with col_s4:
                 st.metric("📝 Articles actuels", len(gestionnaire.articles))
             
             # Bouton d'import
@@ -1034,7 +1060,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.8 - Version finale")
+    st.caption("📦 Gestionnaire d'Inventaire v5.0 - Import toutes lignes")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
