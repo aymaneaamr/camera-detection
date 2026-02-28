@@ -509,12 +509,12 @@ Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 4. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale avec la liste des articles
+# Barre latérale avec la liste des articles - CORRIGÉE avec un seul bouton d'import
 with st.sidebar:
     st.header("📋 Articles en inventaire")
     
-    # Bouton pour importer Excel
-    if st.button("📥 Importer articles Excel", use_container_width=True):
+    # UN SEUL bouton pour importer Excel (toujours visible)
+    if st.button("📥 Importer des articles Excel", use_container_width=True):
         st.session_state.show_import = True
         st.rerun()
     
@@ -592,11 +592,7 @@ with st.sidebar:
                 st.rerun()
     else:
         st.info("Aucun article pour le moment")
-        
-        # Si aucun article, proposer directement l'import
-        if st.button("📥 Importer des articles Excel", use_container_width=True):
-            st.session_state.show_import = True
-            st.rerun()
+        # Pas de bouton supplémentaire ici - on a déjà le bouton d'import en haut
 
 # Section d'import Excel
 if st.session_state.show_import:
@@ -1068,7 +1064,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.4 - Import Excel corrigé")
+    st.caption("📦 Gestionnaire d'Inventaire v4.5 - Interface simplifiée")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
