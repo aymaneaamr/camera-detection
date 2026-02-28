@@ -604,12 +604,8 @@ if st.session_state.show_import:
             st.subheader("Aperçu du fichier original")
             st.dataframe(df.head(10))  # Afficher les 10 premières lignes
             
-            # Afficher les colonnes disponibles
-            st.markdown('<div class="selection-box">', unsafe_allow_html=True)
-            st.subheader("📌 Sélection des colonnes")
-            
+            # Sélection des colonnes - SUPPRESSION du cadre jaune "Colonnes disponibles"
             cols = df.columns.tolist()
-            st.write("Colonnes disponibles :", cols)
             
             # Trouver automatiquement les bonnes colonnes
             default_code_index = 0
@@ -632,8 +628,6 @@ if st.session_state.show_import:
             # Option pour ignorer la première ligne
             skip_first = st.checkbox("Ignorer la première ligne (en-têtes)", value=True, 
                                    help="Cochez cette case si votre fichier contient des en-têtes de colonnes")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
             
             # Afficher un aperçu des données à importer (TOUTES les lignes)
             st.subheader("Aperçu des données à importer :")
@@ -1060,7 +1054,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v5.0 - Import toutes lignes")
+    st.caption("📦 Gestionnaire d'Inventaire v5.1 - Interface épurée")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
