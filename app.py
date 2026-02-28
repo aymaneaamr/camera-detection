@@ -85,11 +85,11 @@ st.markdown("""
         border: 2px dashed #6c757d;
         margin: 1rem 0;
     }
-    .column-match {
-        background: #e7f3ff;
+    .selection-box {
+        background: #fff3cd;
         padding: 1rem;
         border-radius: 5px;
-        border-left: 5px solid #0066cc;
+        border-left: 5px solid #ffc107;
         margin: 1rem 0;
     }
     .debug-info {
@@ -99,13 +99,6 @@ st.markdown("""
         border-radius: 5px;
         font-family: monospace;
         font-size: 0.9rem;
-        margin: 1rem 0;
-    }
-    .selection-box {
-        background: #fff3cd;
-        padding: 1rem;
-        border-radius: 5px;
-        border-left: 5px solid #ffc107;
         margin: 1rem 0;
     }
 </style>
@@ -189,30 +182,29 @@ class GestionnairePieces:
                 code = str(code_value).strip()
                 
                 # Vérifier que le code n'est pas un en-tête de colonne
-                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref', 'colonne']:
+                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref']:
                     add_debug(f"  Ligne {index+1}: En-tête détecté, ignorée")
                     continue
                 
                 add_debug(f"  Ligne {index+1}: Code = '{code}'")
                 
-                # Récupérer le libellé
+                # Récupérer le libellé (dans la colonne libellé)
                 libelle = ""
-                if col_libelle and col_libelle in row.index and pd.notna(row[col_libelle]):
+                if col_libelle and col_libelle != "(Aucune)" and col_libelle in row.index:
                     libelle_value = row[col_libelle]
-                    # Vérifier que ce n'est pas un en-tête
-                    libelle_str = str(libelle_value).strip().lower()
-                    if libelle_str not in ['libellé', 'libelle', 'description', 'designation', 'colonne']:
+                    if pd.notna(libelle_value):
                         libelle = str(libelle_value).strip()
                         add_debug(f"    Libellé = '{libelle[:50]}...'")
                 
-                # Récupérer l'emplacement
+                # Récupérer l'emplacement (dans la colonne emplacement)
                 emplacement = ""
-                if col_emplacement and col_emplacement in row.index and pd.notna(row[col_emplacement]):
-                    emp_value = str(row[col_emplacement]).strip()
-                    # Vérifier que ce n'est pas un en-tête
-                    if emp_value.lower() not in ['emplacement', 'location', 'position', 'none', 'colonne', ''] and emp_value != '':
-                        emplacement = emp_value
-                        add_debug(f"    Emplacement = '{emplacement}'")
+                if col_emplacement and col_emplacement != "(Aucune)" and col_emplacement in row.index:
+                    emp_value = row[col_emplacement]
+                    if pd.notna(emp_value):
+                        emp_str = str(emp_value).strip()
+                        if emp_str.lower() not in ['none', 'nan', '']:
+                            emplacement = emp_str
+                            add_debug(f"    Emplacement = '{emplacement}'")
                 
                 # Créer l'article
                 if code and code not in self.articles:
@@ -623,8 +615,8 @@ if st.session_state.show_import:
             # Lire le fichier Excel
             df = pd.read_excel(uploaded_excel)
             
-            # Afficher un aperçu
-            st.subheader("Aperçu du fichier")
+            # Afficher un aperçu du fichier original
+            st.subheader("Aperçu du fichier original")
             st.dataframe(df.head())
             
             # Afficher les colonnes disponibles
@@ -637,7 +629,7 @@ if st.session_state.show_import:
             with col1:
                 col_code = st.selectbox("📌 Colonne pour CODE article *", cols, index=0 if cols else 0)
             with col2:
-                col_libelle = st.selectbox("📝 Colonne pour LIBELLÉ (optionnel)", ["(Aucune)"] + cols, index=1 if len(cols) > 1 else 0)
+                col_libelle = st.selectbox("📝 Colonne pour LIBELLÉ *", ["(Aucune)"] + cols, index=1 if len(cols) > 1 else 0)
             with col3:
                 col_emplacement = st.selectbox("📍 Colonne pour EMPLACEMENT (optionnel)", ["(Aucune)"] + cols, index=2 if len(cols) > 2 else 0)
             
@@ -667,6 +659,13 @@ if st.session_state.show_import:
             
             apercu = pd.DataFrame(preview_data)
             st.dataframe(apercu)
+            
+            # Afficher des statistiques sur les colonnes sélectionnées
+            st.info(f"📊 Colonne CODE : '{col_code}' - {df[col_code].nunique()} valeurs uniques")
+            if col_libelle != "(Aucune)":
+                st.info(f"📝 Colonne LIBELLÉ : '{col_libelle}' - {df[col_libelle].nunique()} valeurs uniques")
+            if col_emplacement != "(Aucune)":
+                st.info(f"📍 Colonne EMPLACEMENT : '{col_emplacement}' - {df[col_emplacement].nunique()} valeurs uniques")
             
             # Statistiques
             total_lignes = len(df) - (1 if skip_first else 0)
@@ -1069,7 +1068,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.3 - Import Excel avec nettoyage")
+    st.caption("📦 Gestionnaire d'Inventaire v4.4 - Import Excel corrigé")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
