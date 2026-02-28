@@ -673,10 +673,9 @@ if st.session_state.show_import:
                         st.success(f"✅ {importes} articles importés avec succès !")
                         st.balloons()
                         
-                        # Proposer de voir les articles
-                        if st.button("👀 Voir les articles importés", use_container_width=True):
-                            st.session_state.show_import = False
-                            st.rerun()
+                        # FERMER AUTOMATIQUEMENT l'import
+                        st.session_state.show_import = False
+                        st.rerun()
                     else:
                         st.warning("⚠️ Aucun article n'a été importé. Vérifiez que :")
                         st.warning("   - La colonne CODE contient bien des valeurs")
@@ -686,7 +685,7 @@ if st.session_state.show_import:
         except Exception as e:
             st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
     
-    # Bouton pour fermer
+    # Bouton pour fermer manuellement
     if st.button("❌ Fermer l'import", use_container_width=True):
         st.session_state.show_import = False
         st.rerun()
@@ -1035,7 +1034,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v4.7 - Version finale")
+    st.caption("📦 Gestionnaire d'Inventaire v4.8 - Version finale")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
