@@ -590,6 +590,25 @@ def detecter_pieces(image):
     
     return resultat, nb_pieces
 
+# Nouvelle fonction pour recadrer l'image au format 4/3
+def recadrer_4_3(image):
+    """Recadre l'image pour obtenir un ratio 4:3 (largeur/hauteur) en conservant le centre."""
+    h, w = image.shape[:2]
+    ratio_cible = 4.0 / 3.0
+    ratio_actuel = w / h
+    if abs(ratio_actuel - ratio_cible) < 0.01:
+        return image  # déjà proche de 4:3
+    if ratio_actuel > ratio_cible:
+        # Image trop large : on recadre horizontalement
+        nouvelle_largeur = int(h * ratio_cible)
+        debut_x = (w - nouvelle_largeur) // 2
+        return image[:, debut_x:debut_x+nouvelle_largeur]
+    else:
+        # Image trop haute : on recadre verticalement
+        nouvelle_hauteur = int(w / ratio_cible)
+        debut_y = (h - nouvelle_hauteur) // 2
+        return image[debut_y:debut_y+nouvelle_hauteur, :]
+
 # Fonction pour décoder l'image base64
 def base64_to_image(base64_string):
     img_data = base64.b64decode(base64_string)
@@ -1023,6 +1042,8 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             with st.spinner("Analyse de l'image..."):
                 bytes_data = img_file.getvalue()
                 frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                # Appliquer le recadrage 4/3
+                frame = recadrer_4_3(frame)
                 resultat, nb_pieces = detecter_pieces(frame)
                 st.session_state.photo_temp = {
                     'original': frame,
