@@ -600,9 +600,8 @@ def base64_to_image(base64_string):
 # Initialisation de la base de données
 init_database()
 
-# Initialisation
+# Initialisation des états
 if 'gestionnaire' not in st.session_state:
-    # Charger les données depuis SQLite
     st.session_state.gestionnaire = charger_donnees()
 if 'page' not in st.session_state:
     st.session_state.page = "saisie"
@@ -612,11 +611,12 @@ if 'photo_selectionnee' not in st.session_state:
     st.session_state.photo_selectionnee = None
 if 'show_import' not in st.session_state:
     st.session_state.show_import = False
-# Variables temporaires pour l'ajout de photo avec options
 if 'photo_temp' not in st.session_state:
     st.session_state.photo_temp = None
 if 'ajout_photo' not in st.session_state:
     st.session_state.ajout_photo = False
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ""
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -669,8 +669,35 @@ with st.sidebar:
             else:
                 st.info("Aucun article à nettoyer")
         
-        # Afficher tous les articles avec leurs totaux, libellés et emplacements
-        for code_article in sorted(gestionnaire.articles.keys()):
+        # ---- Champ de recherche ----
+        search_query = st.text_input(
+            "🔍 Rechercher un article",
+            value=st.session_state.search_query,
+            placeholder="Code, libellé ou emplacement...",
+            key="search_input"
+        ).lower().strip()
+        st.session_state.search_query = search_query
+        
+        # Filtrer les articles
+        codes_filtres = []
+        if search_query:
+            for code, data in gestionnaire.articles.items():
+                libelle = data.get('libelle', '').lower()
+                emplacement = data.get('emplacement', '').lower()
+                if (search_query in code.lower() or 
+                    search_query in libelle or 
+                    search_query in emplacement):
+                    codes_filtres.append(code)
+        else:
+            codes_filtres = list(gestionnaire.articles.keys())
+        
+        codes_filtres.sort()
+        
+        if not codes_filtres:
+            st.info("Aucun article ne correspond à votre recherche")
+        
+        # Afficher les articles filtrés
+        for code_article in codes_filtres:
             total = gestionnaire.get_total_article(code_article)
             libelle = gestionnaire.get_libelle_article(code_article)
             emplacement = gestionnaire.get_emplacement_article(code_article)
@@ -678,7 +705,6 @@ with st.sidebar:
             with st.container():
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    # Créer un bouton avec le code article
                     if st.button(f"📦 {code_article}", key=f"select_{code_article}", use_container_width=True):
                         st.session_state.article_selectionne = code_article
                         st.session_state.page = "details"
@@ -862,7 +888,7 @@ if st.session_state.show_import:
 
 # Contenu principal
 if st.session_state.page == "saisie" and not st.session_state.show_import:
-    # Page de saisie d'un nouvel article (sans scan de code-barres)
+    # Page de saisie d'un nouvel article (sans scan)
     st.header("➕ Ajouter un nouvel article")
     
     # Formulaire de saisie manuelle
@@ -960,7 +986,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     with col_o2:
         if st.button("📸 Ajouter une photo", use_container_width=True):
             st.session_state.ajout_photo = True
-            st.session_state.photo_temp = None  # Réinitialiser les données temporaires
+            st.session_state.photo_temp = None
             st.rerun()
     with col_o3:
         if st.button("🗑️ Supprimer cet article", use_container_width=True, type="primary"):
