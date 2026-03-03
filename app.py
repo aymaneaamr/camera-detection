@@ -632,10 +632,10 @@ if len(gestionnaire.articles) > 0:
     </div>
     """, unsafe_allow_html=True)
 
-# Afficher l'information de persistance
+# Afficher l'information de persistance (modifiée)
 st.markdown("""
 <div class="database-info">
-    💾 <strong>Persistance active :</strong> Les données sont automatiquement sauvegardées dans 'inventaire.db'
+    💾 <strong>Persistance active :</strong> Les données sont automatiquement sauvegardées
 </div>
 """, unsafe_allow_html=True)
 
@@ -1142,11 +1142,11 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.session_state.photo_selectionnee = None
             st.rerun()
 
-# Pied de page
+# Pied de page (modifié)
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire ")
+    st.caption("📦 Gestionnaire d'Inventaire")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
