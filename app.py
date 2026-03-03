@@ -9,7 +9,6 @@ import base64
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from pyzbar.pyzbar import decode
 import re
 import sqlite3
 import os
@@ -167,36 +166,12 @@ def add_refresh_confirmation():
 # CSS personnalisé
 st.markdown("""
 <style>
-    .barcode-scanner {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 10px;
-        color: white;
-        margin-bottom: 1rem;
-    }
-    .barcode-result {
-        background: #f0f2f6;
-        padding: 1rem;
-        border-radius: 5px;
-        border-left: 5px solid #667eea;
-        margin: 1rem 0;
-    }
     .success-box {
         background: #d4edda;
         color: #155724;
         padding: 1rem;
         border-radius: 5px;
         border-left: 5px solid #28a745;
-        margin: 1rem 0;
-    }
-    .code-display {
-        background: #2c3e50;
-        color: #ecf0f1;
-        padding: 1rem;
-        border-radius: 5px;
-        font-family: monospace;
-        font-size: 1.5rem;
-        text-align: center;
         margin: 1rem 0;
     }
     .location-badge {
@@ -214,14 +189,6 @@ st.markdown("""
         border-radius: 5px;
         font-size: 0.8rem;
         margin-left: 0.5rem;
-    }
-    .article-found {
-        background: #cce5ff;
-        color: #004085;
-        padding: 0.5rem;
-        border-radius: 5px;
-        border-left: 5px solid #004085;
-        margin: 0.5rem 0;
     }
     .import-section {
         background: #f8f9fa;
@@ -574,42 +541,6 @@ class GestionnairePieces:
             os.remove('inventaire.db')
         self.articles = {}
 
-# Fonction pour détecter et lire les codes-barres
-def detecter_code_barre(image):
-    """Détecte et lit les codes-barres dans une image"""
-    resultat = image.copy()
-    codes_detectes = []
-    
-    # Conversion en niveaux de gris
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Décoder les codes-barres
-    codes = decode(gray)
-    
-    for code in codes:
-        # Extraire les données
-        data = code.data.decode('utf-8')
-        type_code = code.type
-        
-        # Dessiner le rectangle autour du code
-        points = code.polygon
-        if len(points) == 4:
-            pts = np.array([(p.x, p.y) for p in points], np.int32)
-            pts = pts.reshape((-1, 1, 2))
-            cv2.polylines(resultat, [pts], True, (0, 255, 0), 3)
-        
-        # Ajouter le texte
-        cv2.putText(resultat, f"{type_code}: {data}", 
-                   (code.rect.left, code.rect.top - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        codes_detectes.append({
-            'data': data,
-            'type': type_code
-        })
-    
-    return resultat, codes_detectes
-
 # Fonction pour détecter les pièces dans une image
 def detecter_pieces(image):
     """Détecte et compte les pièces dans une image"""
@@ -679,12 +610,13 @@ if 'article_selectionne' not in st.session_state:
     st.session_state.article_selectionne = None
 if 'photo_selectionnee' not in st.session_state:
     st.session_state.photo_selectionnee = None
-if 'code_detecte' not in st.session_state:
-    st.session_state.code_detecte = None
-if 'scan_effectue' not in st.session_state:
-    st.session_state.scan_effectue = False
 if 'show_import' not in st.session_state:
     st.session_state.show_import = False
+# Variables temporaires pour l'ajout de photo avec options
+if 'photo_temp' not in st.session_state:
+    st.session_state.photo_temp = None
+if 'ajout_photo' not in st.session_state:
+    st.session_state.ajout_photo = False
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -708,13 +640,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Interface principale
-st.title("📦 Gestionnaire d'Inventaire Multi-Pièces avec Scan Code-Barres")
+st.title("📦 Gestionnaire d'Inventaire Multi-Pièces")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
-1. **Scanner** un code-barres pour identifier automatiquement l'article
-2. **Importer** un fichier Excel avec vos articles (code, libellé, emplacement)
-3. **Ajouter** plusieurs photos pour chaque article
-4. **Exporter** un fichier Excel avec tous les totaux
+1. **Importer** un fichier Excel avec vos articles (code, libellé, emplacement)
+2. **Ajouter** plusieurs photos pour chaque article (avec possibilité d'ajuster le comptage)
+3. **Exporter** un fichier Excel avec tous les totaux
 """)
 
 # Barre latérale avec la liste des articles
@@ -774,8 +705,6 @@ with st.sidebar:
         if st.button("➕ Nouvel article manuel", use_container_width=True):
             st.session_state.page = "saisie"
             st.session_state.article_selectionne = None
-            st.session_state.code_detecte = None
-            st.session_state.scan_effectue = False
             st.rerun()
         
         st.divider()
@@ -933,94 +862,11 @@ if st.session_state.show_import:
 
 # Contenu principal
 if st.session_state.page == "saisie" and not st.session_state.show_import:
-    # Page de saisie d'un nouvel article avec scan de code-barres
+    # Page de saisie d'un nouvel article (sans scan de code-barres)
     st.header("➕ Ajouter un nouvel article")
-    
-    # Section scan de code-barres
-    st.markdown('<div class="barcode-scanner">', unsafe_allow_html=True)
-    st.markdown("### 📷 Scanner le code-barres de l'article")
-    st.markdown("Prenez une photo du code-barres pour identifier automatiquement l'article")
-    
-    col_scan1, col_scan2 = st.columns(2)
-    
-    with col_scan1:
-        scan_option = st.radio("Source", ["📸 Caméra", "🖼️ Upload"], horizontal=True, key="scan_source")
-    
-    if scan_option == "📸 Caméra":
-        img_barcode = st.camera_input("Prendre une photo du code-barres", key="camera_barcode")
-        if img_barcode:
-            with st.spinner("🔍 Analyse du code-barres..."):
-                bytes_data = img_barcode.getvalue()
-                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
-                
-                if codes:
-                    # Prendre le premier code détecté
-                    code_trouve = codes[0]['data']
-                    st.session_state.code_detecte = code_trouve
-                    st.session_state.scan_effectue = True
-                    
-                    # Afficher l'image avec le code détecté
-                    st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                            caption="Code-barres détecté", use_container_width=True)
-                    
-                    st.markdown(f"""
-                    <div class="success-box">
-                        <h4>✅ Code-barres détecté !</h4>
-                        <div class="code-display">{code_trouve}</div>
-                        <p><strong>Type :</strong> {codes[0]['type']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-    
-    else:  # Upload
-        uploaded_barcode = st.file_uploader("Choisir une image de code-barres", type=['jpg', 'jpeg', 'png'], key="upload_barcode")
-        if uploaded_barcode:
-            with st.spinner("🔍 Analyse du code-barres..."):
-                file_bytes = np.asarray(bytearray(uploaded_barcode.read()), dtype=np.uint8)
-                frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                
-                # Détection du code-barres
-                image_annotee, codes = detecter_code_barre(frame)
-                
-                # Afficher l'image
-                st.image(cv2.cvtColor(image_annotee, cv2.COLOR_BGR2RGB), 
-                        caption="Image analysée", use_container_width=True)
-                
-                if codes:
-                    code_trouve = codes[0]['data']
-                    st.session_state.code_detecte = code_trouve
-                    st.session_state.scan_effectue = True
-                    
-                    st.markdown(f"""
-                    <div class="success-box">
-                        <h4>✅ Code-barres détecté !</h4>
-                        <div class="code-display">{code_trouve}</div>
-                        <p><strong>Type :</strong> {codes[0]['type']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning("❌ Aucun code-barres détecté. Veuillez réessayer avec une image plus claire.")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Bouton pour réinitialiser le scan
-    if st.session_state.scan_effectue:
-        if st.button("🔄 Nouveau scan", use_container_width=True):
-            st.session_state.scan_effectue = False
-            st.session_state.code_detecte = None
-            st.rerun()
-    
-    st.markdown("---")
     
     # Formulaire de saisie manuelle
     st.markdown("### 📝 Informations de l'article")
-    
-    # Valeur par défaut pour le code (depuis le scan)
-    default_code = st.session_state.code_detecte if st.session_state.code_detecte else ""
     
     # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
@@ -1028,7 +874,6 @@ if st.session_state.page == "saisie" and not st.session_state.show_import:
     with col_code:
         code_article = st.text_input(
             "Code article *",
-            value=default_code,
             placeholder="Code article (obligatoire)",
             key="code_article_input"
         )
@@ -1063,8 +908,6 @@ if st.session_state.page == "saisie" and not st.session_state.show_import:
                         st.info(f"📍 Emplacement: {emplacement}")
                     st.session_state.article_selectionne = code_article
                     st.session_state.page = "details"
-                    st.session_state.code_detecte = None
-                    st.session_state.scan_effectue = False
                     st.rerun()
                 else:
                     if code_article in gestionnaire.articles:
@@ -1075,8 +918,6 @@ if st.session_state.page == "saisie" and not st.session_state.show_import:
                 st.error("❌ Veuillez entrer un code article")
     with col2:
         if st.button("❌ Annuler", use_container_width=True):
-            st.session_state.code_detecte = None
-            st.session_state.scan_effectue = False
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
@@ -1106,7 +947,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         if emplacement:
             st.metric("Emplacement", emplacement)
     
-    # Afficher un badge si le code est un code-barres
+    # Afficher un badge si le code est un code-barres (juste pour info)
     if re.match(r'^[A-Z0-9-]+$', code_article):
         st.info(f"🔖 Code produit: {code_article}")
     
@@ -1115,12 +956,12 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     with col_o1:
         if st.button("⬅️ Retour à la saisie", use_container_width=True):
             st.session_state.page = "saisie"
-            st.session_state.code_detecte = None
-            st.session_state.scan_effectue = False
             st.rerun()
     with col_o2:
         if st.button("📸 Ajouter une photo", use_container_width=True):
             st.session_state.ajout_photo = True
+            st.session_state.photo_temp = None  # Réinitialiser les données temporaires
+            st.rerun()
     with col_o3:
         if st.button("🗑️ Supprimer cet article", use_container_width=True, type="primary"):
             if gestionnaire.supprimer_article(code_article):
@@ -1130,7 +971,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     
     st.divider()
     
-    # Ajout de photo
+    # Ajout de photo avec options de calcul
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
@@ -1138,35 +979,68 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         with col_p2:
             if st.button("❌ Annuler"):
                 st.session_state.ajout_photo = False
+                st.session_state.photo_temp = None
                 st.rerun()
         
         with col_p1:
-            source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True)
+            source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True, key="photo_source")
         
+        # Gestion de la capture/upload
+        img_file = None
         if source == "📸 Prendre une photo":
-            img_file = st.camera_input("Prendre une photo")
-            if img_file:
-                with st.spinner("Analyse..."):
-                    bytes_data = img_file.getvalue()
-                    frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                    resultat, nb_pieces = detecter_pieces(frame)
-                    
-                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
-                        st.session_state.ajout_photo = False
-                        st.rerun()
+            img_file = st.camera_input("Prendre une photo", key="camera_photo")
+        else:
+            img_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'], key="upload_photo")
         
-        else:  # Choisir une image
-            uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'])
-            if uploaded_file:
-                with st.spinner("Analyse..."):
-                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-                    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                    resultat, nb_pieces = detecter_pieces(frame)
+        # Si une nouvelle image est fournie, on l'analyse et on stocke temporairement
+        if img_file is not None:
+            with st.spinner("Analyse de l'image..."):
+                bytes_data = img_file.getvalue()
+                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                resultat, nb_pieces = detecter_pieces(frame)
+                st.session_state.photo_temp = {
+                    'original': frame,
+                    'analyse': resultat,
+                    'detected': nb_pieces
+                }
+        
+        # Si des données temporaires existent, on affiche l'aperçu et les options
+        if st.session_state.photo_temp is not None:
+            temp = st.session_state.photo_temp
+            st.image(cv2.cvtColor(temp['analyse'], cv2.COLOR_BGR2RGB), 
+                     caption=f"Analyse - {temp['detected']} pièces détectées", use_container_width=True)
+            
+            st.markdown("### Options de comptage")
+            col_opt1, col_opt2, col_opt3 = st.columns(3)
+            
+            with col_opt1:
+                operation = st.selectbox("Opération", 
+                                         ["Utiliser détection", "Remplacer", "Additionner", "Multiplier"],
+                                         index=0)
+            with col_opt2:
+                manuel = st.number_input("Valeur manuelle", min_value=0, value=0, step=1)
+            with col_opt3:
+                st.write("")  # espace
+                st.write("")  # espace
+                if st.button("✅ Ajouter cette photo", use_container_width=True):
+                    # Calcul du nombre final selon l'opération
+                    detected = temp['detected']
+                    if operation == "Utiliser détection":
+                        nb_final = detected
+                    elif operation == "Remplacer":
+                        nb_final = manuel if manuel > 0 else detected
+                    elif operation == "Additionner":
+                        nb_final = detected + manuel
+                    elif operation == "Multiplier":
+                        nb_final = detected * manuel if manuel > 0 else detected
+                    else:
+                        nb_final = detected
                     
-                    if gestionnaire.ajouter_photo_article(code_article, frame, resultat, nb_pieces):
-                        st.success(f"✅ {nb_pieces} pièces détectées et ajoutées!")
+                    # Ajouter la photo avec le nombre calculé
+                    if gestionnaire.ajouter_photo_article(code_article, temp['original'], temp['analyse'], nb_final):
+                        st.success(f"✅ Photo ajoutée avec {nb_final} pièces!")
                         st.session_state.ajout_photo = False
+                        st.session_state.photo_temp = None
                         st.rerun()
     
     # Affichage des photos existantes
@@ -1272,7 +1146,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
-    st.caption("📦 Gestionnaire d'Inventaire v7.0 - Avec persistance SQLite")
+    st.caption("📦 Gestionnaire d'Inventaire v8.0 - Avec persistance SQLite")
 with col_f2:
     total_global = sum(gestionnaire.get_tous_les_totaux().values())
     st.caption(f"🧩 Total global: {total_global} pièces")
