@@ -667,7 +667,7 @@ st.title("📦 Gestionnaire d'Inventaire Multi-Pièces")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Importer** un fichier Excel avec vos articles (code, libellé, emplacement)
-2. **Ajouter** plusieurs photos pour chaque article (avec possibilité d'ajuster le comptage et le format d'image)
+2. **Ajouter** plusieurs photos pour chaque article (avec possibilité d'ajuster le comptage et le cadrage)
 3. **Exporter** un fichier Excel avec tous les totaux
 """)
 
@@ -1020,7 +1020,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     
     st.divider()
     
-    # Ajout de photo avec options de calcul et choix du format
+    # Ajout de photo avec options de calcul et de cadrage (auto ou manuel)
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
@@ -1041,14 +1041,17 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         else:
             img_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'], key="upload_photo")
         
-        # Si une nouvelle image est fournie, on la stocke brute (sans recadrage) dans photo_temp
+        # Si une nouvelle image est fournie, on la stocke brute
         if img_file is not None:
             with st.spinner("Chargement de l'image..."):
                 bytes_data = img_file.getvalue()
                 frame_brut = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                h, w = frame_brut.shape[:2]
                 st.session_state.photo_temp = {
                     'brut': frame_brut,
-                    'format_choisi': "Original",  # valeur par défaut
+                    'mode_cadrage': "Automatique",  # ou "Manuel"
+                    'format_choisi': "Original",
+                    'roi': (0, 0, w, h),  # (x, y, largeur, hauteur) pour le cadrage manuel
                     'recadree': None,
                     'analyse': None,
                     'detected': 0
@@ -1058,15 +1061,28 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         if st.session_state.photo_temp is not None:
             temp = st.session_state.photo_temp
             frame_brut = temp['brut']
+            h_brut, w_brut = frame_brut.shape[:2]
             
-            # Choix du format
-            format_options = ["Original", "4:3", "16:9"]
-            index_defaut = format_options.index(temp.get('format_choisi', "Original"))
-            format_choisi = st.selectbox("Format d'image", format_options, index=index_defaut, key="format_select")
+            # Choix du mode de cadrage
+            mode_cadrage = st.radio(
+                "Mode de cadrage",
+                ["Automatique (format)", "Manuel"],
+                index=0 if temp.get('mode_cadrage')=="Automatique" else 1,
+                horizontal=True,
+                key="mode_cadrage"
+            )
+            temp['mode_cadrage'] = mode_cadrage
             
-            # Si le format a changé, on met à jour et on réanalyse
-            if format_choisi != temp.get('format_choisi'):
+            # Variables pour stocker la zone recadrée
+            roi = temp.get('roi', (0, 0, w_brut, h_brut))
+            
+            if mode_cadrage == "Automatique (format)":
+                # Choix du format automatique
+                format_options = ["Original", "4:3", "16:9"]
+                index_defaut = format_options.index(temp.get('format_choisi', "Original"))
+                format_choisi = st.selectbox("Format d'image", format_options, index=index_defaut, key="format_select")
                 temp['format_choisi'] = format_choisi
+                
                 # Appliquer le recadrage selon le format
                 if format_choisi == "4:3":
                     frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
@@ -1074,20 +1090,23 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                     frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
                 else:
                     frame_recadree = frame_brut
-                temp['recadree'] = frame_recadree
-                # Analyser l'image recadrée
-                resultat, nb = detecter_pieces(frame_recadree)
-                temp['analyse'] = resultat
-                temp['detected'] = nb
+            else:
+                # Cadrage manuel : sliders pour définir la région
+                st.markdown("**Définissez la zone à conserver :**")
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    x = st.slider("X (départ)", 0, w_brut-1, roi[0], key="roi_x")
+                    y = st.slider("Y (départ)", 0, h_brut-1, roi[1], key="roi_y")
+                with col_s2:
+                    largeur = st.slider("Largeur", 1, w_brut - x, min(roi[2], w_brut - x), key="roi_w")
+                    hauteur = st.slider("Hauteur", 1, h_brut - y, min(roi[3], h_brut - y), key="roi_h")
+                roi = (x, y, largeur, hauteur)
+                temp['roi'] = roi
+                # Recadrer
+                frame_recadree = frame_brut[y:y+hauteur, x:x+largeur]
             
-            # Si l'analyse n'a pas encore été faite (premier affichage après chargement)
-            if temp.get('analyse') is None:
-                if format_choisi == "4:3":
-                    frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
-                elif format_choisi == "16:9":
-                    frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
-                else:
-                    frame_recadree = frame_brut
+            # Si l'image recadrée a changé, on la stocke et on réanalyse
+            if not np.array_equal(temp.get('recadree'), frame_recadree) if temp.get('recadree') is not None else True:
                 temp['recadree'] = frame_recadree
                 resultat, nb = detecter_pieces(frame_recadree)
                 temp['analyse'] = resultat
@@ -1230,7 +1249,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.session_state.photo_selectionnee = None
             st.rerun()
 
-# Pied de page (modifié)
+# Pied de page
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
