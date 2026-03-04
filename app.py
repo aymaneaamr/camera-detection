@@ -590,22 +590,26 @@ def detecter_pieces(image):
     
     return resultat, nb_pieces
 
-# Nouvelle fonction pour recadrer l'image au format 4/3
-def recadrer_4_3(image):
-    """Recadre l'image pour obtenir un ratio 4:3 (largeur/hauteur) en conservant le centre."""
+# Fonction pour recadrer l'image selon un ratio donné (largeur/hauteur)
+def recadrer_selon_ratio(image, ratio):
+    """
+    Recadre l'image au centre pour obtenir le ratio spécifié.
+    ratio : float (largeur/hauteur) ou None pour garder l'original.
+    """
+    if ratio is None:
+        return image
     h, w = image.shape[:2]
-    ratio_cible = 4.0 / 3.0
     ratio_actuel = w / h
-    if abs(ratio_actuel - ratio_cible) < 0.01:
-        return image  # déjà proche de 4:3
-    if ratio_actuel > ratio_cible:
+    if abs(ratio_actuel - ratio) < 0.01:
+        return image
+    if ratio_actuel > ratio:
         # Image trop large : on recadre horizontalement
-        nouvelle_largeur = int(h * ratio_cible)
+        nouvelle_largeur = int(h * ratio)
         debut_x = (w - nouvelle_largeur) // 2
         return image[:, debut_x:debut_x+nouvelle_largeur]
     else:
         # Image trop haute : on recadre verticalement
-        nouvelle_hauteur = int(w / ratio_cible)
+        nouvelle_hauteur = int(w / ratio)
         debut_y = (h - nouvelle_hauteur) // 2
         return image[debut_y:debut_y+nouvelle_hauteur, :]
 
@@ -663,7 +667,7 @@ st.title("📦 Gestionnaire d'Inventaire Multi-Pièces")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
 1. **Importer** un fichier Excel avec vos articles (code, libellé, emplacement)
-2. **Ajouter** plusieurs photos pour chaque article (avec possibilité d'ajuster le comptage)
+2. **Ajouter** plusieurs photos pour chaque article (avec possibilité d'ajuster le comptage et le format d'image)
 3. **Exporter** un fichier Excel avec tous les totaux
 """)
 
@@ -1016,7 +1020,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     
     st.divider()
     
-    # Ajout de photo avec options de calcul
+    # Ajout de photo avec options de calcul et choix du format
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
@@ -1037,23 +1041,59 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         else:
             img_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'], key="upload_photo")
         
-        # Si une nouvelle image est fournie, on l'analyse et on stocke temporairement
+        # Si une nouvelle image est fournie, on la stocke brute (sans recadrage) dans photo_temp
         if img_file is not None:
-            with st.spinner("Analyse de l'image..."):
+            with st.spinner("Chargement de l'image..."):
                 bytes_data = img_file.getvalue()
-                frame = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-                # Appliquer le recadrage 4/3
-                frame = recadrer_4_3(frame)
-                resultat, nb_pieces = detecter_pieces(frame)
+                frame_brut = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 st.session_state.photo_temp = {
-                    'original': frame,
-                    'analyse': resultat,
-                    'detected': nb_pieces
+                    'brut': frame_brut,
+                    'format_choisi': "Original",  # valeur par défaut
+                    'recadree': None,
+                    'analyse': None,
+                    'detected': 0
                 }
         
-        # Si des données temporaires existent, on affiche l'aperçu et les options
+        # Si des données temporaires existent, on propose les options
         if st.session_state.photo_temp is not None:
             temp = st.session_state.photo_temp
+            frame_brut = temp['brut']
+            
+            # Choix du format
+            format_options = ["Original", "4:3", "16:9"]
+            index_defaut = format_options.index(temp.get('format_choisi', "Original"))
+            format_choisi = st.selectbox("Format d'image", format_options, index=index_defaut, key="format_select")
+            
+            # Si le format a changé, on met à jour et on réanalyse
+            if format_choisi != temp.get('format_choisi'):
+                temp['format_choisi'] = format_choisi
+                # Appliquer le recadrage selon le format
+                if format_choisi == "4:3":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
+                elif format_choisi == "16:9":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
+                else:
+                    frame_recadree = frame_brut
+                temp['recadree'] = frame_recadree
+                # Analyser l'image recadrée
+                resultat, nb = detecter_pieces(frame_recadree)
+                temp['analyse'] = resultat
+                temp['detected'] = nb
+            
+            # Si l'analyse n'a pas encore été faite (premier affichage après chargement)
+            if temp.get('analyse') is None:
+                if format_choisi == "4:3":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
+                elif format_choisi == "16:9":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
+                else:
+                    frame_recadree = frame_brut
+                temp['recadree'] = frame_recadree
+                resultat, nb = detecter_pieces(frame_recadree)
+                temp['analyse'] = resultat
+                temp['detected'] = nb
+            
+            # Afficher l'image analysée
             st.image(cv2.cvtColor(temp['analyse'], cv2.COLOR_BGR2RGB), 
                      caption=f"Analyse - {temp['detected']} pièces détectées", use_container_width=True)
             
@@ -1084,7 +1124,8 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                         nb_final = detected
                     
                     # Ajouter la photo avec le nombre calculé
-                    if gestionnaire.ajouter_photo_article(code_article, temp['original'], temp['analyse'], nb_final):
+                    # On sauvegarde l'image recadrée (originale) et l'analyse
+                    if gestionnaire.ajouter_photo_article(code_article, temp['recadree'], temp['analyse'], nb_final):
                         st.success(f"✅ Photo ajoutée avec {nb_final} pièces!")
                         st.session_state.ajout_photo = False
                         st.session_state.photo_temp = None
