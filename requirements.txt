@@ -10,3 +10,4 @@ pyzbar
 matplotlib
 pandas
 streamlit-webrtc
+ultralytics
