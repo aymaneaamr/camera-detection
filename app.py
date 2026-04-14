@@ -222,15 +222,6 @@ st.markdown("""
         margin: 0.5rem 0;
         font-size: 0.9rem;
     }
-    .detection-info {
-        background: #e7f3ff;
-        color: #004085;
-        padding: 0.8rem;
-        border-radius: 5px;
-        border-left: 5px solid #0066cc;
-        margin: 0.5rem 0;
-        font-size: 0.9rem;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -550,204 +541,61 @@ class GestionnairePieces:
             os.remove('inventaire.db')
         self.articles = {}
 
-# ==================== NOUVELLE FONCTION DE DÉTECTION WATERSHED ====================
-
-def detecter_pieces_watershed(image, min_area=200, min_distance=0.35, gaussian_blur=5, morph_iterations=2):
-    """
-    Détecte et compte les pièces dans une image en utilisant l'algorithme Watershed
-    
-    Paramètres:
-    - image: image BGR
-    - min_area: surface minimum pour considérer un objet (filtre le bruit)
-    - min_distance: seuil pour la distance transform (0.1-0.7, plus petit = plus sensible)
-    - gaussian_blur: taille du kernel gaussien (doit être impair)
-    - morph_iterations: nombre d'itérations pour les opérations morphologiques
-    
-    Retourne:
-    - resultat: image annotée
-    - nb_pieces: nombre de pièces détectées
-    - details: dictionnaire avec les détails de détection
-    """
-    resultat = image.copy()
-    h, w = image.shape[:2]
-    
-    # 1. Conversion en niveaux de gris
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # 2. Flou gaussien pour réduire le bruit
-    blur = cv2.GaussianBlur(gray, (gaussian_blur, gaussian_blur), 0)
-    
-    # 3. Seuillage - essayer d'abord Otsu, sinon adaptatif
-    ret, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    
-    # Si Otsu ne donne pas un bon résultat, utiliser le seuillage adaptatif
-    if ret < 50 or ret > 200:
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                       cv2.THRESH_BINARY_INV, 15, 3)
-    
-    # 4. Opérations morphologiques pour nettoyer
-    kernel = np.ones((3, 3), np.uint8)
-    
-    # Ouverture pour enlever le bruit
-    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=morph_iterations)
-    
-    # 5. Dilatation pour obtenir le fond sûr
-    sure_bg = cv2.dilate(opening, kernel, iterations=3)
-    
-    # 6. Transformation de distance pour trouver les centres des objets
-    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
-    
-    # Normaliser pour visualisation (optionnel)
-    cv2.normalize(dist_transform, dist_transform, 0, 1.0, cv2.NORM_MINMAX)
-    
-    # 7. Seuillage pour identifier les zones sûres du premier plan
-    ret, sure_fg = cv2.threshold(dist_transform, min_distance * dist_transform.max(), 255, 0)
-    sure_fg = np.uint8(sure_fg)
-    
-    # 8. Zones inconnues (frontières entre objets)
-    unknown = cv2.subtract(sure_bg, sure_fg)
-    
-    # 9. Marquage des composantes connectées
-    ret, markers = cv2.connectedComponents(sure_fg)
-    
-    # Ajouter 1 pour que le fond ne soit pas 0
-    markers = markers + 1
-    
-    # Marquer les zones inconnues comme 0
-    markers[unknown == 255] = 0
-    
-    # 10. Appliquer l'algorithme Watershed
-    try:
-        markers = cv2.watershed(resultat, markers)
-    except cv2.error as e:
-        # En cas d'erreur, revenir à une méthode plus simple
-        st.warning("Watershed a échoué, utilisation de la méthode de contour simple")
-        return detecter_pieces_simple(image, min_area)
-    
-    # 11. Compter et dessiner les objets
-    nb_pieces = 0
-    pieces_valides = []
-    contours_tous = []
-    
-    for marker_id in range(2, markers.max() + 1):
-        # Créer un masque pour chaque objet
-        mask = np.uint8(markers == marker_id) * 255
-        
-        # Trouver les contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        for contour in contours:
-            aire = cv2.contourArea(contour)
-            
-            # Filtrer par aire minimum
-            if aire > min_area:
-                nb_pieces += 1
-                pieces_valides.append({
-                    'contour': contour,
-                    'aire': aire,
-                    'id': marker_id
-                })
-                contours_tous.append(contour)
-    
-    # 12. Dessiner les résultats
-    for piece in pieces_valides:
-        contour = piece['contour']
-        
-        # Couleur basée sur l'ID pour différencier les objets
-        color = (
-            (piece['id'] * 50) % 255,
-            (piece['id'] * 80) % 255,
-            (piece['id'] * 110) % 255
-        )
-        
-        # Dessiner le contour
-        cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
-        
-        # Calculer et dessiner le centre
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            
-            # Dessiner un cercle au centre
-            cv2.circle(resultat, (cx, cy), 5, (0, 0, 255), -1)
-            
-            # Ajouter le numéro de l'objet
-            cv2.putText(resultat, str(piece['id']-1), (cx-10, cy-10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-    
-    # 13. Ajouter les informations sur l'image
-    cv2.putText(resultat, f"Pieces detectees: {nb_pieces}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    
-    cv2.putText(resultat, f"Min area: {min_area}", (10, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
-    
-    # 14. Créer le dictionnaire de détails
-    details = {
-        'nb_pieces': nb_pieces,
-        'pieces': pieces_valides,
-        'parametres': {
-            'min_area': min_area,
-            'min_distance': min_distance,
-            'gaussian_blur': gaussian_blur,
-            'morph_iterations': morph_iterations
-        },
-        'statistiques': {
-            'aire_totale': sum(p['aire'] for p in pieces_valides),
-            'aire_moyenne': np.mean([p['aire'] for p in pieces_valides]) if pieces_valides else 0
-        }
-    }
-    
-    return resultat, nb_pieces, details
-
-def detecter_pieces_simple(image, min_area=200):
-    """Méthode de fallback simple par contours"""
+# Fonction pour détecter les pièces dans une image
+def detecter_pieces(image):
+    """Détecte et compte les pièces dans une image"""
     resultat = image.copy()
     
+    # Conversion en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Flou pour réduire le bruit
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Détection des contours
     edges = cv2.Canny(blur, 50, 150)
     
+    # Dilatation et érosion
     kernel = np.ones((3, 3), np.uint8)
     edges = cv2.dilate(edges, kernel, iterations=2)
     edges = cv2.erode(edges, kernel, iterations=1)
     
+    # Trouver les contours
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
+    # Filtrer les petits contours (bruit)
     pieces_valides = []
     for contour in contours:
         aire = cv2.contourArea(contour)
-        if aire > min_area:
+        if aire > 200:  # Seuil minimum
             pieces_valides.append(contour)
     
     nb_pieces = len(pieces_valides)
     
+    # Dessiner les contours
     for contour in pieces_valides:
+        # Dessiner le contour en vert
         cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
+        
+        # Ajouter un point au centre
         M = cv2.moments(contour)
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
             cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
     
+    # Ajouter le compteur
     cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     
-    details = {'nb_pieces': nb_pieces, 'pieces': pieces_valides}
-    return resultat, nb_pieces, details
+    return resultat, nb_pieces
 
-# Fonction principale de détection (interface unifiée)
-def detecter_pieces(image, use_watershed=True, **kwargs):
-    """Fonction unifiée pour la détection"""
-    if use_watershed:
-        return detecter_pieces_watershed(image, **kwargs)
-    else:
-        return detecter_pieces_simple(image, kwargs.get('min_area', 200))
-
-# Fonction pour recadrer l'image selon un ratio donné
+# Fonction pour recadrer l'image selon un ratio donné (largeur/hauteur)
 def recadrer_selon_ratio(image, ratio):
-    """Recadre l'image au centre pour obtenir le ratio spécifié"""
+    """
+    Recadre l'image au centre pour obtenir le ratio spécifié.
+    ratio : float (largeur/hauteur) ou None pour garder l'original.
+    """
     if ratio is None:
         return image
     h, w = image.shape[:2]
@@ -755,10 +603,12 @@ def recadrer_selon_ratio(image, ratio):
     if abs(ratio_actuel - ratio) < 0.01:
         return image
     if ratio_actuel > ratio:
+        # Image trop large : on recadre horizontalement
         nouvelle_largeur = int(h * ratio)
         debut_x = (w - nouvelle_largeur) // 2
         return image[:, debut_x:debut_x+nouvelle_largeur]
     else:
+        # Image trop haute : on recadre verticalement
         nouvelle_hauteur = int(w / ratio)
         debut_y = (h - nouvelle_hauteur) // 2
         return image[debut_y:debut_y+nouvelle_hauteur, :]
@@ -790,8 +640,6 @@ if 'ajout_photo' not in st.session_state:
     st.session_state.ajout_photo = False
 if 'search_query' not in st.session_state:
     st.session_state.search_query = ""
-if 'use_watershed' not in st.session_state:
-    st.session_state.use_watershed = True
 
 gestionnaire = st.session_state.gestionnaire
 
@@ -807,7 +655,7 @@ if len(gestionnaire.articles) > 0:
     </div>
     """, unsafe_allow_html=True)
 
-# Afficher l'information de persistance
+# Afficher l'information de persistance (modifiée)
 st.markdown("""
 <div class="database-info">
     💾 <strong>Persistance active :</strong> Les données sont automatiquement sauvegardées
@@ -950,7 +798,7 @@ if st.session_state.show_import:
             
             # Afficher un aperçu du fichier original
             st.subheader("Aperçu du fichier original")
-            st.dataframe(df.head(10))
+            st.dataframe(df.head(10))  # Afficher les 10 premières lignes
             
             # Sélection des colonnes
             cols = df.columns.tolist()
@@ -963,7 +811,7 @@ if st.session_state.show_import:
             for i, col in enumerate(cols):
                 col_lower = col.lower()
                 if 'emplacement' in col_lower:
-                    default_emplacement_index = i + 1
+                    default_emplacement_index = i + 1  # +1 car on a "(Aucune)" en première position
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -977,20 +825,25 @@ if st.session_state.show_import:
             skip_first = st.checkbox("Ignorer la première ligne (en-têtes)", value=True, 
                                    help="Cochez cette case si votre fichier contient des en-têtes de colonnes")
             
-            # Afficher un aperçu des données à importer
+            # Afficher un aperçu des données à importer (TOUTES les lignes)
             st.subheader("Aperçu des données à importer :")
             
+            # Aperçu en ignorant ou non la première ligne
             start_preview = 1 if skip_first else 0
             preview_data = {}
             
+            # Code - prendre toutes les lignes
             preview_data['Code'] = df[col_code].iloc[start_preview:].values
             
+            # Libellé
             if col_libelle != "(Aucune)":
                 preview_data['Libellé'] = df[col_libelle].iloc[start_preview:].values
             
+            # Emplacement
             if col_emplacement != "(Aucune)":
                 preview_data['Emplacement'] = df[col_emplacement].iloc[start_preview:].values
             
+            # Créer le DataFrame d'aperçu
             apercu = pd.DataFrame(preview_data)
             st.dataframe(apercu)
             
@@ -1012,11 +865,13 @@ if st.session_state.show_import:
             # Bouton d'import
             if st.button("✅ Confirmer l'import", use_container_width=True, type="primary"):
                 with st.spinner("Import en cours..."):
+                    # Convertir "(Aucune)" en None
                     col_lib = col_libelle if col_libelle != "(Aucune)" else None
                     col_emp = col_emplacement if col_emplacement != "(Aucune)" else None
                     
                     importes, existants, erreurs = gestionnaire.importer_articles_excel(df, col_code, col_lib, col_emp, skip_first)
                     
+                    # Afficher le résultat
                     st.markdown("---")
                     st.subheader("📊 Résultat de l'import")
                     
@@ -1033,10 +888,15 @@ if st.session_state.show_import:
                     if importes > 0:
                         st.success(f"✅ {importes} articles importés avec succès !")
                         st.balloons()
+                        
+                        # FERMER AUTOMATIQUEMENT l'import
                         st.session_state.show_import = False
                         st.rerun()
                     else:
-                        st.warning("⚠️ Aucun article n'a été importé.")
+                        st.warning("⚠️ Aucun article n'a été importé. Vérifiez que :")
+                        st.warning("   - La colonne CODE contient bien des valeurs")
+                        st.warning("   - Les codes ne sont pas déjà dans l'inventaire")
+                        st.warning("   - Vous avez bien sélectionné les bonnes colonnes")
         
         except Exception as e:
             st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
@@ -1051,11 +911,13 @@ if st.session_state.show_import:
 
 # Contenu principal
 if st.session_state.page == "saisie" and not st.session_state.show_import:
-    # Page de saisie d'un nouvel article
+    # Page de saisie d'un nouvel article (sans scan)
     st.header("➕ Ajouter un nouvel article")
     
+    # Formulaire de saisie manuelle
     st.markdown("### 📝 Informations de l'article")
     
+    # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_code:
@@ -1134,6 +996,10 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         if emplacement:
             st.metric("Emplacement", emplacement)
     
+    # Afficher un badge si le code est un code-barres (juste pour info)
+    if re.match(r'^[A-Z0-9-]+$', code_article):
+        st.info(f"🔖 Code produit: {code_article}")
+    
     # Options
     col_o1, col_o2, col_o3 = st.columns(3)
     with col_o1:
@@ -1154,16 +1020,9 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     
     st.divider()
     
-    # Ajout de photo avec Watershed et paramètres ajustables
+    # Ajout de photo avec options de calcul et choix du format
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
-        
-        # Information sur la méthode de détection
-        st.markdown("""
-        <div class="detection-info">
-            🔬 <strong>Détection Watershed activée</strong> - Cette méthode sépare mieux les pièces en contact
-        </div>
-        """, unsafe_allow_html=True)
         
         col_p1, col_p2 = st.columns([2, 1])
         with col_p2:
@@ -1175,20 +1034,6 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         with col_p1:
             source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True, key="photo_source")
         
-        # Paramètres de détection avancés
-        with st.expander("⚙️ Paramètres de détection avancés", expanded=False):
-            col_set1, col_set2 = st.columns(2)
-            with col_set1:
-                min_area = st.slider("Surface minimum (pixels)", 50, 1000, 200, 50, 
-                                    help="Filtre les petits objets (bruit)")
-                min_distance = st.slider("Sensibilité de séparation", 0.1, 0.7, 0.35, 0.05,
-                                        help="Plus petit = plus sensible pour séparer les objets en contact")
-            with col_set2:
-                gaussian_blur = st.slider("Flou gaussien", 1, 15, 5, 2,
-                                         help="Taille du filtre de flou (doit être impair)")
-                morph_iterations = st.slider("Itérations morphologiques", 1, 5, 2, 1,
-                                            help="Nombre de passes pour nettoyer l'image")
-        
         # Gestion de la capture/upload
         img_file = None
         if source == "📸 Prendre une photo":
@@ -1196,21 +1041,20 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         else:
             img_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'], key="upload_photo")
         
-        # Si une nouvelle image est fournie
+        # Si une nouvelle image est fournie, on la stocke brute (sans recadrage) dans photo_temp
         if img_file is not None:
             with st.spinner("Chargement de l'image..."):
                 bytes_data = img_file.getvalue()
                 frame_brut = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 st.session_state.photo_temp = {
                     'brut': frame_brut,
-                    'format_choisi': "Original",
+                    'format_choisi': "Original",  # valeur par défaut
                     'recadree': None,
                     'analyse': None,
-                    'detected': 0,
-                    'details': None
+                    'detected': 0
                 }
         
-        # Si des données temporaires existent
+        # Si des données temporaires existent, on propose les options
         if st.session_state.photo_temp is not None:
             temp = st.session_state.photo_temp
             frame_brut = temp['brut']
@@ -1220,9 +1064,10 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             index_defaut = format_options.index(temp.get('format_choisi', "Original"))
             format_choisi = st.selectbox("Format d'image", format_options, index=index_defaut, key="format_select")
             
-            # Appliquer le recadrage si nécessaire
+            # Si le format a changé, on met à jour et on réanalyse
             if format_choisi != temp.get('format_choisi'):
                 temp['format_choisi'] = format_choisi
+                # Appliquer le recadrage selon le format
                 if format_choisi == "4:3":
                     frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
                 elif format_choisi == "16:9":
@@ -1230,21 +1075,12 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                 else:
                     frame_recadree = frame_brut
                 temp['recadree'] = frame_recadree
-                
-                # Analyser avec Watershed
-                resultat, nb, details = detecter_pieces(
-                    frame_recadree, 
-                    use_watershed=True,
-                    min_area=min_area,
-                    min_distance=min_distance,
-                    gaussian_blur=gaussian_blur,
-                    morph_iterations=morph_iterations
-                )
+                # Analyser l'image recadrée
+                resultat, nb = detecter_pieces(frame_recadree)
                 temp['analyse'] = resultat
                 temp['detected'] = nb
-                temp['details'] = details
             
-            # Si l'analyse n'a pas encore été faite
+            # Si l'analyse n'a pas encore été faite (premier affichage après chargement)
             if temp.get('analyse') is None:
                 if format_choisi == "4:3":
                     frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
@@ -1253,60 +1089,13 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                 else:
                     frame_recadree = frame_brut
                 temp['recadree'] = frame_recadree
-                
-                resultat, nb, details = detecter_pieces(
-                    frame_recadree,
-                    use_watershed=True,
-                    min_area=min_area,
-                    min_distance=min_distance,
-                    gaussian_blur=gaussian_blur,
-                    morph_iterations=morph_iterations
-                )
+                resultat, nb = detecter_pieces(frame_recadree)
                 temp['analyse'] = resultat
                 temp['detected'] = nb
-                temp['details'] = details
-            
-            # Bouton pour réanalyser avec nouveaux paramètres
-            col_re1, col_re2 = st.columns([1, 3])
-            with col_re1:
-                if st.button("🔄 Réanalyser", use_container_width=True):
-                    if format_choisi == "4:3":
-                        frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
-                    elif format_choisi == "16:9":
-                        frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
-                    else:
-                        frame_recadree = frame_brut
-                    temp['recadree'] = frame_recadree
-                    
-                    resultat, nb, details = detecter_pieces(
-                        frame_recadree,
-                        use_watershed=True,
-                        min_area=min_area,
-                        min_distance=min_distance,
-                        gaussian_blur=gaussian_blur,
-                        morph_iterations=morph_iterations
-                    )
-                    temp['analyse'] = resultat
-                    temp['detected'] = nb
-                    temp['details'] = details
-                    st.rerun()
             
             # Afficher l'image analysée
             st.image(cv2.cvtColor(temp['analyse'], cv2.COLOR_BGR2RGB), 
-                     caption=f"Analyse Watershed - {temp['detected']} pièces détectées", 
-                     use_container_width=True)
-            
-            # Afficher des statistiques de détection
-            if temp.get('details'):
-                details = temp['details']
-                col_stat1, col_stat2, col_stat3 = st.columns(3)
-                with col_stat1:
-                    st.metric("Pièces détectées", details['nb_pieces'])
-                with col_stat2:
-                    if details.get('statistiques', {}).get('aire_moyenne', 0) > 0:
-                        st.metric("Aire moyenne", f"{int(details['statistiques']['aire_moyenne'])} px²")
-                with col_stat3:
-                    st.metric("Aire totale", f"{int(details['statistiques']['aire_totale'])} px²")
+                     caption=f"Analyse - {temp['detected']} pièces détectées", use_container_width=True)
             
             st.markdown("### Options de comptage")
             col_opt1, col_opt2, col_opt3 = st.columns(3)
@@ -1318,10 +1107,10 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             with col_opt2:
                 manuel = st.number_input("Valeur manuelle", min_value=0, value=0, step=1)
             with col_opt3:
-                st.write("")
-                st.write("")
+                st.write("")  # espace
+                st.write("")  # espace
                 if st.button("✅ Ajouter cette photo", use_container_width=True):
-                    # Calcul du nombre final
+                    # Calcul du nombre final selon l'opération
                     detected = temp['detected']
                     if operation == "Utiliser détection":
                         nb_final = detected
@@ -1334,7 +1123,8 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                     else:
                         nb_final = detected
                     
-                    # Ajouter la photo
+                    # Ajouter la photo avec le nombre calculé
+                    # On sauvegarde l'image recadrée (originale) et l'analyse
                     if gestionnaire.ajouter_photo_article(code_article, temp['recadree'], temp['analyse'], nb_final):
                         st.success(f"✅ Photo ajoutée avec {nb_final} pièces!")
                         st.session_state.ajout_photo = False
@@ -1345,6 +1135,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     if photos:
         st.subheader("📸 Photos enregistrées")
         
+        # Options d'affichage
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             tri = st.selectbox("Trier par", ["Plus récente", "Plus ancienne", "Plus de pièces", "Moins de pièces"])
@@ -1364,13 +1155,16 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         cols = st.columns(3)
         for i, photo in enumerate(photos_affichees):
             with cols[i % 3]:
+                # Afficher la miniature
                 img = base64_to_image(photo['image_analyse'])
                 img_mini = cv2.resize(img, (200, 150))
                 st.image(cv2.cvtColor(img_mini, cv2.COLOR_BGR2RGB), use_column_width=True)
                 
+                # Informations
                 st.caption(f"📅 {photo['timestamp'][:10]}")
                 st.caption(f"🔢 {photo['nb_pieces']} pièces")
                 
+                # Boutons
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
                     if st.button("🔍 Voir", key=f"view_{code_article}_{i}"):
@@ -1399,6 +1193,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
         if libelle:
             st.subheader(libelle)
         
+        # Afficher les deux images
         col_img1, col_img2 = st.columns(2)
         
         with col_img1:
@@ -1407,13 +1202,15 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
         
         with col_img2:
-            st.subheader(f"🔍 Analyse Watershed - {photo['nb_pieces']} pièces")
+            st.subheader(f"🔍 Analyse - {photo['nb_pieces']} pièces")
             img_analyse = base64_to_image(photo['image_analyse'])
             st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
         
+        # Informations
         st.metric("Nombre de pièces", photo['nb_pieces'])
         st.caption(f"Date: {photo['timestamp']}")
         
+        # Boutons
         col_b1, col_b2 = st.columns(2)
         with col_b1:
             if st.button("⬅️ Retour à l'article", use_container_width=True):
@@ -1433,7 +1230,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.session_state.photo_selectionnee = None
             st.rerun()
 
-# Pied de page
+# Pied de page (modifié)
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
@@ -1449,4 +1246,3 @@ with col_f4:
 with col_f5:
     libelles_renseignes = sum(1 for l in gestionnaire.get_tous_libelles().values() if l)
     st.caption(f"📝 Libellés: {libelles_renseignes}/{len(gestionnaire.articles)}")
-    st.caption("🔬 Détection Watershed activée")
