@@ -222,6 +222,15 @@ st.markdown("""
         margin: 0.5rem 0;
         font-size: 0.9rem;
     }
+    .detection-info {
+        background: #e7f3ff;
+        color: #004085;
+        padding: 0.8rem;
+        border-radius: 5px;
+        border-left: 5px solid #0066cc;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -541,54 +550,262 @@ class GestionnairePieces:
             os.remove('inventaire.db')
         self.articles = {}
 
-# Fonction pour détecter les pièces dans une image
-def detecter_pieces(image):
-    """Détecte et compte les pièces dans une image"""
-    resultat = image.copy()
+# ==================== NOUVELLE FONCTION DE DÉTECTION WATERSHED AVANCÉE ====================
+
+def fusionner_contours_proches(contours, distance_seuil=30):
+    """Fusionne les contours qui sont trop proches les uns des autres"""
+    if len(contours) < 2:
+        return contours
     
-    # Conversion en niveaux de gris
+    fusionnes = []
+    utilises = set()
+    
+    for i, cnt1 in enumerate(contours):
+        if i in utilises:
+            continue
+            
+        # Calculer le centre du contour 1
+        M1 = cv2.moments(cnt1)
+        if M1["m00"] == 0:
+            continue
+        cx1 = int(M1["m10"] / M1["m00"])
+        cy1 = int(M1["m01"] / M1["m00"])
+        
+        contour_fusionne = cnt1.copy()
+        
+        for j, cnt2 in enumerate(contours[i+1:], i+1):
+            if j in utilises:
+                continue
+                
+            M2 = cv2.moments(cnt2)
+            if M2["m00"] == 0:
+                continue
+            cx2 = int(M2["m10"] / M2["m00"])
+            cy2 = int(M2["m01"] / M2["m00"])
+            
+            # Calculer la distance entre les centres
+            distance = np.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2)
+            
+            # Si les contours sont proches, les fusionner
+            if distance < distance_seuil:
+                # Créer un contour fusionné (enveloppe convexe des deux)
+                pts1 = cnt1.reshape(-1, 2)
+                pts2 = cnt2.reshape(-1, 2)
+                tous_pts = np.vstack([pts1, pts2])
+                contour_fusionne = cv2.convexHull(tous_pts)
+                utilises.add(j)
+        
+        fusionnes.append(contour_fusionne)
+        utilises.add(i)
+    
+    return fusionnes
+
+def detecter_pieces_watershed_advanced(image, min_area=150, min_distance=0.25, 
+                                       gaussian_blur=7, morph_iterations=2,
+                                       use_clahe=True, use_edges=True):
+    """
+    Détection avancée pour pièces en vrac avec amélioration du contraste
+    et utilisation des contours pour guider Watershed
+    """
+    resultat = image.copy()
+    h, w = image.shape[:2]
+    
+    # 1. Conversion en niveaux de gris
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Flou pour réduire le bruit
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    # 2. Amélioration du contraste avec CLAHE
+    if use_clahe:
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        gray = clahe.apply(gray)
     
-    # Détection des contours
-    edges = cv2.Canny(blur, 50, 150)
+    # 3. Flou gaussien adaptatif
+    if gaussian_blur % 2 == 0:
+        gaussian_blur += 1  # Doit être impair
+    blur = cv2.GaussianBlur(gray, (gaussian_blur, gaussian_blur), 0)
     
-    # Dilatation et érosion
+    # 4. Détection des contours pour aider à la séparation
+    if use_edges:
+        # Utiliser Canny pour détecter les bords
+        edges = cv2.Canny(blur, 30, 100)
+        kernel = np.ones((2,2), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        # Combiner avec le seuillage
+        blur = cv2.addWeighted(blur, 0.7, edges, 0.3, 0)
+    
+    # 5. Seuillage adaptatif amélioré
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                   cv2.THRESH_BINARY_INV, 15, 5)
+    
+    # 6. Opérations morphologiques plus agressives
+    kernel_small = np.ones((3, 3), np.uint8)
+    kernel_medium = np.ones((5, 5), np.uint8)
+    
+    # Fermeture pour remplir les trous
+    closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_medium, iterations=1)
+    
+    # Ouverture pour enlever le bruit
+    opening = cv2.morphologyEx(closing, cv2.MORPH_OPEN, kernel_small, iterations=morph_iterations)
+    
+    # 7. Érosion pour séparer les objets collés
+    eroded = cv2.erode(opening, kernel_small, iterations=2)
+    
+    # 8. Reconstruction par dilatation conditionnelle
+    sure_bg = cv2.dilate(eroded, kernel_medium, iterations=4)
+    
+    # 9. Transformation de distance sur l'image érodée
+    dist_transform = cv2.distanceTransform(eroded, cv2.DIST_L2, 5)
+    cv2.normalize(dist_transform, dist_transform, 0, 1.0, cv2.NORM_MINMAX)
+    
+    # 10. Seuillage adaptatif pour les marqueurs
+    ret, sure_fg = cv2.threshold(dist_transform, min_distance * dist_transform.max(), 255, 0)
+    sure_fg = np.uint8(sure_fg)
+    
+    # 11. Si pas assez de marqueurs, essayer avec un seuil plus bas
+    num_markers = len(np.unique(sure_fg)) - 1
+    if num_markers < 3:  # Si moins de 3 objets détectés
+        ret, sure_fg = cv2.threshold(dist_transform, 0.15 * dist_transform.max(), 255, 0)
+        sure_fg = np.uint8(sure_fg)
+    
+    # 12. Trouver les maxima locaux pour forcer la séparation
+    try:
+        from scipy import ndimage
+        local_max = ndimage.maximum_filter(dist_transform, size=20)
+        local_max = (dist_transform == local_max) & (dist_transform > 0.1)
+        sure_fg = np.uint8(sure_fg | (local_max * 255))
+    except:
+        pass  # Si scipy n'est pas disponible, on continue sans
+    
+    # 13. Zones inconnues
+    unknown = cv2.subtract(sure_bg, sure_fg)
+    
+    # 14. Marquage
+    ret, markers = cv2.connectedComponents(sure_fg)
+    markers = markers + 1
+    markers[unknown == 255] = 0
+    
+    # 15. Watershed
+    try:
+        markers = cv2.watershed(resultat, markers)
+    except:
+        # Fallback: utiliser la méthode simple
+        return detecter_pieces_fallback(image, min_area)
+    
+    # 16. Post-traitement pour fusionner les petits fragments
+    contours_par_id = {}
+    
+    for marker_id in range(2, markers.max() + 1):
+        mask = np.uint8(markers == marker_id) * 255
+        
+        # Opération de fermeture pour fusionner les fragments proches
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)
+        
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            aire = cv2.contourArea(contour)
+            
+            # Aire minimum adaptative selon la taille de l'image
+            min_area_adaptive = min_area * (w * h) / (640 * 480)
+            
+            if aire > min_area_adaptive:
+                # Vérifier la circularité pour filtrer les faux positifs
+                perimetre = cv2.arcLength(contour, True)
+                if perimetre > 0:
+                    circularite = 4 * np.pi * aire / (perimetre * perimetre)
+                    # Les pièces devraient avoir une certaine circularité
+                    if 0.2 < circularite < 1.8:
+                        contours_par_id[marker_id] = contour
+    
+    # 17. Fusionner les contours trop proches
+    contours_fusionnes = fusionner_contours_proches(list(contours_par_id.values()), distance_seuil=30)
+    
+    # 18. Dessiner les résultats finaux
+    for i, contour in enumerate(contours_fusionnes):
+        aire = cv2.contourArea(contour)
+        
+        # Couleur basée sur l'index
+        color = (
+            (i * 50 + 100) % 255,
+            (i * 80 + 50) % 255,
+            (i * 110) % 255
+        )
+        
+        # Dessiner le contour
+        cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
+        
+        # Remplir légèrement pour visualisation
+        overlay = resultat.copy()
+        cv2.drawContours(overlay, [contour], -1, color, -1)
+        resultat = cv2.addWeighted(resultat, 0.7, overlay, 0.3, 0)
+        
+        # Centre
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            cv2.circle(resultat, (cx, cy), 5, (0, 0, 255), -1)
+            cv2.putText(resultat, str(i+1), (cx-15, cy-15),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    
+    nb_pieces = len(contours_fusionnes)
+    
+    # 19. Ajouter les informations
+    cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    cv2.putText(resultat, f"Min area: {min_area}", (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
+    
+    return resultat, nb_pieces
+
+def detecter_pieces_fallback(image, min_area=200):
+    """Méthode de fallback améliorée"""
+    resultat = image.copy()
+    
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Amélioration du contraste
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    gray = clahe.apply(gray)
+    
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+    
+    # Détection de contours avec Canny
+    edges = cv2.Canny(blur, 30, 100)
+    
+    # Dilatation pour connecter
     kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=2)
-    edges = cv2.erode(edges, kernel, iterations=1)
+    edges = cv2.dilate(edges, kernel, iterations=1)
     
     # Trouver les contours
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Filtrer les petits contours (bruit)
     pieces_valides = []
     for contour in contours:
         aire = cv2.contourArea(contour)
-        if aire > 200:  # Seuil minimum
+        if aire > min_area:
             pieces_valides.append(contour)
     
     nb_pieces = len(pieces_valides)
     
-    # Dessiner les contours
-    for contour in pieces_valides:
-        # Dessiner le contour en vert
+    for i, contour in enumerate(pieces_valides):
         cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
-        
-        # Ajouter un point au centre
         M = cv2.moments(contour)
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
             cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
+            cv2.putText(resultat, str(i+1), (cx-10, cy-10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
     
-    # Ajouter le compteur
     cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     
     return resultat, nb_pieces
+
+# Fonction principale de détection (remplace l'ancienne)
+def detecter_pieces(image):
+    """Détecte et compte les pièces dans une image - Version Watershed avancée"""
+    return detecter_pieces_watershed_advanced(image)
 
 # Fonction pour recadrer l'image selon un ratio donné (largeur/hauteur)
 def recadrer_selon_ratio(image, ratio):
@@ -1024,6 +1241,13 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
         
+        # Information sur la méthode de détection
+        st.markdown("""
+        <div class="detection-info">
+            🔬 <strong>Détection Watershed avancée activée</strong> - Cette méthode sépare mieux les pièces en contact
+        </div>
+        """, unsafe_allow_html=True)
+        
         col_p1, col_p2 = st.columns([2, 1])
         with col_p2:
             if st.button("❌ Annuler"):
@@ -1075,7 +1299,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                 else:
                     frame_recadree = frame_brut
                 temp['recadree'] = frame_recadree
-                # Analyser l'image recadrée
+                # Analyser l'image recadrée avec Watershed
                 resultat, nb = detecter_pieces(frame_recadree)
                 temp['analyse'] = resultat
                 temp['detected'] = nb
@@ -1095,7 +1319,7 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
             
             # Afficher l'image analysée
             st.image(cv2.cvtColor(temp['analyse'], cv2.COLOR_BGR2RGB), 
-                     caption=f"Analyse - {temp['detected']} pièces détectées", use_container_width=True)
+                     caption=f"Analyse Watershed - {temp['detected']} pièces détectées", use_container_width=True)
             
             st.markdown("### Options de comptage")
             col_opt1, col_opt2, col_opt3 = st.columns(3)
@@ -1202,7 +1426,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
         
         with col_img2:
-            st.subheader(f"🔍 Analyse - {photo['nb_pieces']} pièces")
+            st.subheader(f"🔍 Analyse Watershed - {photo['nb_pieces']} pièces")
             img_analyse = base64_to_image(photo['image_analyse'])
             st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
         
