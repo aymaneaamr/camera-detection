@@ -13,7 +13,6 @@ import re
 import sqlite3
 import os
 import pickle
-from ultralytics import YOLO
 
 # ==================== Configuration de la page ====================
 st.set_page_config(
@@ -223,21 +222,13 @@ st.markdown("""
         margin: 0.5rem 0;
         font-size: 0.9rem;
     }
-    .yolo-info {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 0.8rem;
-        border-radius: 8px;
-        margin: 0.5rem 0;
-        font-weight: bold;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 class GestionnairePieces:
     def __init__(self):
         """Initialise le gestionnaire de pièces"""
-        self.articles = {}
+        self.articles = {}  # Dictionnaire {code_article: {"libelle": "", "photos": [], "emplacement": ""}}
         self.reset_article_courant()
     
     def reset_article_courant(self):
@@ -251,7 +242,7 @@ class GestionnairePieces:
         }
     
     def creer_nouvel_article(self, code_article, libelle="", emplacement=""):
-        """Crée un nouvel article dans l'inventaire"""
+        """Crée un nouvel article dans l'inventaire avec son libellé et emplacement"""
         if code_article and code_article not in self.articles:
             date_creation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.articles[code_article] = {
@@ -260,6 +251,7 @@ class GestionnairePieces:
                 'emplacement': emplacement,
                 'date_creation': date_creation
             }
+            # Sauvegarder dans la base de données
             sauvegarder_article(code_article, libelle, emplacement, date_creation)
             return True
         return False
@@ -273,52 +265,64 @@ class GestionnairePieces:
                 a_supprimer.append(code)
         
         for code in a_supprimer:
+            # Supprimer de la base de données
             supprimer_article_db(code)
             del self.articles[code]
         
         return len(a_supprimer)
     
     def importer_articles_excel(self, df, col_code, col_libelle, col_emplacement, skip_first_row=True):
-        """Importe des articles depuis Excel"""
+        """Importe des articles avec sélection manuelle des colonnes - version complète"""
         articles_importes = 0
         articles_existants = 0
         erreurs = 0
         
+        # Barre de progression simple
         progress_bar = st.progress(0)
         status_text = st.empty()
         
+        # Déterminer l'index de début (0 ou 1)
         start_idx = 1 if skip_first_row else 0
         total_lignes = len(df) - start_idx
+        
+        # Dictionnaire pour suivre les codes déjà vus (pour éviter les doublons dans le fichier)
         codes_vus = set()
         
         for index in range(start_idx, len(df)):
+            # Mettre à jour la progression
             progression = (index - start_idx + 1) / total_lignes
             progress_bar.progress(progression)
             status_text.text(f"Import en cours... {index - start_idx + 1}/{total_lignes}")
             
             row = df.iloc[index]
             try:
+                # Récupérer le code
                 code_value = row[col_code]
                 if pd.isna(code_value) or str(code_value).strip() == '':
                     continue
                 
                 code = str(code_value).strip()
                 
-                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref']:
+                # Vérifier que le code n'est pas un en-tête de colonne
+                if code.lower() in ['code article', 'code', 'article', 'réf', 'ref', '0', '1', '2', '3', '4']:
                     continue
                 
+                # Éviter les doublons dans le même fichier
                 if code in codes_vus:
                     continue
                 codes_vus.add(code)
                 
+                # Récupérer le libellé
                 libelle = ""
                 if col_libelle and col_libelle != "(Aucune)" and col_libelle in row.index:
                     libelle_value = row[col_libelle]
                     if pd.notna(libelle_value):
                         libelle = str(libelle_value).strip()
+                        # Nettoyer les valeurs "None"
                         if libelle.lower() == 'none':
                             libelle = ""
                 
+                # Récupérer l'emplacement
                 emplacement = ""
                 if col_emplacement and col_emplacement != "(Aucune)" and col_emplacement in row.index:
                     emp_value = row[col_emplacement]
@@ -327,6 +331,7 @@ class GestionnairePieces:
                         if emp_str.lower() not in ['none', 'nan', '']:
                             emplacement = emp_str
                 
+                # Créer l'article
                 if code and code not in self.articles:
                     date_creation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     self.articles[code] = {
@@ -335,6 +340,7 @@ class GestionnairePieces:
                         'emplacement': emplacement,
                         'date_creation': date_creation
                     }
+                    # Sauvegarder dans la base de données
                     sauvegarder_article(code, libelle, emplacement, date_creation)
                     articles_importes += 1
                 elif code in self.articles:
@@ -344,16 +350,18 @@ class GestionnairePieces:
                 erreurs += 1
                 continue
         
+        # Nettoyer les éléments de progression
         progress_bar.empty()
         status_text.empty()
         
         return articles_importes, articles_existants, erreurs
     
     def ajouter_photo_article(self, code_article, frame_original, frame_analyse, nb_pieces):
-        """Ajoute une photo analysée"""
+        """Ajoute une photo analysée à un article existant"""
         if code_article in self.articles:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
+            # Convertir les images en base64
             _, buffer_original = cv2.imencode('.jpg', frame_original)
             _, buffer_analyse = cv2.imencode('.jpg', frame_analyse)
             
@@ -369,69 +377,91 @@ class GestionnairePieces:
             }
             
             self.articles[code_article]['photos'].append(photo_data)
+            
+            # Sauvegarder dans la base de données
             sauvegarder_photo(code_article, timestamp, nb_pieces, img_originale_b64, img_analyse_b64)
             
             return True
         return False
     
     def get_total_article(self, code_article):
+        """Retourne le total de pièces pour un article donné"""
         if code_article in self.articles:
             return sum(photo['nb_pieces'] for photo in self.articles[code_article]['photos'])
         return 0
     
     def get_photos_article(self, code_article):
+        """Retourne toutes les photos d'un article"""
         if code_article in self.articles:
             return self.articles[code_article]['photos']
         return []
     
     def get_emplacement_article(self, code_article):
+        """Retourne l'emplacement d'un article"""
         if code_article in self.articles:
             return self.articles[code_article].get('emplacement', '')
         return ''
     
     def get_libelle_article(self, code_article):
+        """Retourne le libellé d'un article"""
         if code_article in self.articles:
             return self.articles[code_article].get('libelle', '')
         return ''
     
     def supprimer_photo(self, code_article, photo_id):
+        """Supprime une photo d'un article"""
         if code_article in self.articles and 0 <= photo_id < len(self.articles[code_article]['photos']):
+            # Récupérer le timestamp pour trouver l'ID SQLite
             timestamp = self.articles[code_article]['photos'][photo_id]['timestamp']
             db_id = get_photo_db_id(code_article, timestamp)
             
+            # Supprimer de la base de données
             if db_id:
                 supprimer_photo_db(db_id)
             
+            # Supprimer de la mémoire
             del self.articles[code_article]['photos'][photo_id]
             
+            # Réindexer les IDs
             for i, photo in enumerate(self.articles[code_article]['photos']):
                 photo['id'] = i
             return True
         return False
     
     def supprimer_article(self, code_article):
+        """Supprime complètement un article"""
         if code_article in self.articles:
+            # Supprimer de la base de données
             supprimer_article_db(code_article)
+            
+            # Supprimer de la mémoire
             del self.articles[code_article]
             return True
         return False
     
     def get_tous_les_totaux(self):
+        """Retourne un dictionnaire avec tous les totaux par article"""
         return {code: self.get_total_article(code) for code in self.articles}
     
     def get_tous_emplacements(self):
+        """Retourne un dictionnaire avec tous les emplacements par article"""
         return {code: self.get_emplacement_article(code) for code in self.articles}
     
     def get_tous_libelles(self):
+        """Retourne un dictionnaire avec tous les libellés par article"""
         return {code: self.get_libelle_article(code) for code in self.articles}
     
     def generer_excel(self):
+        """Génère un fichier Excel avec l'inventaire complet"""
+        # Créer un nouveau classeur Excel
         output = BytesIO()
         workbook = openpyxl.Workbook()
         
+        # Feuille principale - Résumé
         sheet_resume = workbook.active
         sheet_resume.title = "Inventaire"
         
+        # En-têtes
         headers = ["Code Article", "Libellé", "Emplacement", "Quantité totale", "Nombre de photos", "Dernière mise à jour"]
         for col, header in enumerate(headers, 1):
             cell = sheet_resume.cell(row=1, column=col)
@@ -441,6 +471,7 @@ class GestionnairePieces:
             cell.font = Font(color="FFFFFF", bold=True)
             cell.alignment = Alignment(horizontal="center")
         
+        # Données du résumé
         row = 2
         for code_article, data in self.articles.items():
             total = sum(p['nb_pieces'] for p in data['photos'])
@@ -457,6 +488,7 @@ class GestionnairePieces:
             sheet_resume.cell(row=row, column=6).value = derniere_date
             row += 1
         
+        # Ajuster la largeur des colonnes
         sheet_resume.column_dimensions['A'].width = 20
         sheet_resume.column_dimensions['B'].width = 40
         sheet_resume.column_dimensions['C'].width = 20
@@ -464,8 +496,10 @@ class GestionnairePieces:
         sheet_resume.column_dimensions['E'].width = 15
         sheet_resume.column_dimensions['F'].width = 22
         
+        # Feuille de détail
         sheet_detail = workbook.create_sheet("Détail des photos")
         
+        # En-têtes détail
         detail_headers = ["Code Article", "Libellé", "Emplacement", "Photo #", "Date", "Nombre de pièces"]
         for col, header in enumerate(detail_headers, 1):
             cell = sheet_detail.cell(row=1, column=col)
@@ -474,6 +508,7 @@ class GestionnairePieces:
             cell.fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
             cell.alignment = Alignment(horizontal="center")
         
+        # Données détaillées
         row = 2
         for code_article, data in self.articles.items():
             libelle = data.get('libelle', '')
@@ -487,6 +522,7 @@ class GestionnairePieces:
                 sheet_detail.cell(row=row, column=6).value = photo['nb_pieces']
                 row += 1
         
+        # Ajuster les colonnes du détail
         sheet_detail.column_dimensions['A'].width = 20
         sheet_detail.column_dimensions['B'].width = 40
         sheet_detail.column_dimensions['C'].width = 20
@@ -499,105 +535,67 @@ class GestionnairePieces:
         return output
     
     def reinitialiser_tout(self):
+        """Réinitialise complètement l'inventaire"""
+        # Supprimer le fichier de base de données
         if os.path.exists('inventaire.db'):
             os.remove('inventaire.db')
         self.articles = {}
 
-# ==================== INITIALISATION YOLO ====================
-
-@st.cache_resource
-def load_yolo_model(model_name='yolov8n.pt'):
-    """Charge le modèle YOLOv8 (mis en cache)"""
-    try:
-        model = YOLO(model_name)
-        return model
-    except Exception as e:
-        st.error(f"Erreur lors du chargement du modèle YOLO: {e}")
-        return None
-
-# ==================== FONCTION DE DÉTECTION YOLO ====================
-
-def detecter_pieces_yolo(image, model=None, conf_threshold=0.25, iou_threshold=0.45):
-    """
-    Détecte et compte les pièces dans une image avec YOLOv8
-    
-    Paramètres:
-    - image: image BGR
-    - model: modèle YOLO chargé
-    - conf_threshold: seuil de confiance (0-1)
-    - iou_threshold: seuil IoU pour NMS
-    
-    Retourne:
-    - resultat: image annotée
-    - nb_pieces: nombre de pièces détectées
-    """
+# Fonction pour détecter les pièces dans une image
+def detecter_pieces(image):
+    """Détecte et compte les pièces dans une image"""
     resultat = image.copy()
     
-    if model is None:
-        # Fallback si modèle non chargé
-        cv2.putText(resultat, "YOLO non disponible", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        return resultat, 0
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    try:
-        # Faire la prédiction
-        results = model(image, conf=conf_threshold, iou=iou_threshold)
+    # Flou pour réduire le bruit
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Détection des contours
+    edges = cv2.Canny(blur, 50, 150)
+    
+    # Dilatation et érosion
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=2)
+    edges = cv2.erode(edges, kernel, iterations=1)
+    
+    # Trouver les contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Filtrer les petits contours (bruit)
+    pieces_valides = []
+    for contour in contours:
+        aire = cv2.contourArea(contour)
+        if aire > 200:  # Seuil minimum
+            pieces_valides.append(contour)
+    
+    nb_pieces = len(pieces_valides)
+    
+    # Dessiner les contours
+    for contour in pieces_valides:
+        # Dessiner le contour en vert
+        cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
         
-        # Compter les détections
-        if len(results) > 0 and results[0].boxes is not None:
-            boxes = results[0].boxes
-            nb_pieces = len(boxes)
-            
-            # Annoter l'image
-            for i, box in enumerate(boxes):
-                # Coordonnées
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                conf = float(box.conf[0])
-                cls = int(box.cls[0]) if box.cls is not None else 0
-                
-                # Couleur basée sur la classe ou l'index
-                color = (
-                    (i * 50 + 100) % 255,
-                    (i * 80 + 50) % 255,
-                    (i * 110) % 255
-                )
-                
-                # Dessiner le rectangle
-                cv2.rectangle(resultat, (x1, y1), (x2, y2), color, 2)
-                
-                # Centre
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
-                cv2.circle(resultat, (cx, cy), 4, (0, 0, 255), -1)
-                
-                # Label
-                label = f"#{i+1} ({conf:.2f})"
-                cv2.putText(resultat, label, (x1, y1-5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        else:
-            nb_pieces = 0
-        
-        # Ajouter le compteur
-        cv2.putText(resultat, f"YOLO - Pieces: {nb_pieces}", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(resultat, f"Conf: {conf_threshold}", (10, 60),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
-        
-        return resultat, nb_pieces
-        
-    except Exception as e:
-        st.error(f"Erreur lors de la détection YOLO: {e}")
-        cv2.putText(resultat, f"Erreur: {str(e)[:30]}", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
-        return resultat, 0
+        # Ajouter un point au centre
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
+    
+    # Ajouter le compteur
+    cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    
+    return resultat, nb_pieces
 
-# Fonction principale de détection
-def detecter_pieces(image, model=None, conf_threshold=0.25):
-    """Fonction unifiée pour la détection"""
-    return detecter_pieces_yolo(image, model, conf_threshold)
-
-# Fonction pour recadrer l'image
+# Fonction pour recadrer l'image selon un ratio donné (largeur/hauteur)
 def recadrer_selon_ratio(image, ratio):
+    """
+    Recadre l'image au centre pour obtenir le ratio spécifié.
+    ratio : float (largeur/hauteur) ou None pour garder l'original.
+    """
     if ratio is None:
         return image
     h, w = image.shape[:2]
@@ -605,10 +603,12 @@ def recadrer_selon_ratio(image, ratio):
     if abs(ratio_actuel - ratio) < 0.01:
         return image
     if ratio_actuel > ratio:
+        # Image trop large : on recadre horizontalement
         nouvelle_largeur = int(h * ratio)
         debut_x = (w - nouvelle_largeur) // 2
         return image[:, debut_x:debut_x+nouvelle_largeur]
     else:
+        # Image trop haute : on recadre verticalement
         nouvelle_hauteur = int(w / ratio)
         debut_y = (h - nouvelle_hauteur) // 2
         return image[debut_y:debut_y+nouvelle_hauteur, :]
@@ -620,7 +620,7 @@ def base64_to_image(base64_string):
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     return img
 
-# ==================== INITIALISATION ====================
+# Initialisation de la base de données
 init_database()
 
 # Initialisation des états
@@ -640,15 +640,8 @@ if 'ajout_photo' not in st.session_state:
     st.session_state.ajout_photo = False
 if 'search_query' not in st.session_state:
     st.session_state.search_query = ""
-if 'yolo_model' not in st.session_state:
-    st.session_state.yolo_model = None
-if 'conf_threshold' not in st.session_state:
-    st.session_state.conf_threshold = 0.25
 
 gestionnaire = st.session_state.gestionnaire
-
-# Charger le modèle YOLO
-yolo_model = load_yolo_model('yolov8n.pt')
 
 # Ajouter la confirmation d'actualisation
 add_refresh_confirmation()
@@ -662,33 +655,27 @@ if len(gestionnaire.articles) > 0:
     </div>
     """, unsafe_allow_html=True)
 
-# Afficher l'information YOLO
-if yolo_model is not None:
-    st.markdown("""
-    <div class="yolo-info">
-        🤖 <strong>YOLOv8 activé</strong> - Détection par intelligence artificielle
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <div class="warning-box">
-        ⚠️ <strong>YOLOv8 non disponible</strong> - Utilisation du mode dégradé
-    </div>
-    """, unsafe_allow_html=True)
+# Afficher l'information de persistance (modifiée)
+st.markdown("""
+<div class="database-info">
+    💾 <strong>Persistance active :</strong> Les données sont automatiquement sauvegardées
+</div>
+""", unsafe_allow_html=True)
 
 # Interface principale
 st.title("📦 Gestionnaire d'Inventaire Multi-Pièces")
 st.markdown("""
 Cette application permet de gérer l'inventaire de plusieurs types de pièces :
-1. **Importer** un fichier Excel avec vos articles
-2. **Ajouter** plusieurs photos pour chaque article
+1. **Importer** un fichier Excel avec vos articles (code, libellé, emplacement)
+2. **Ajouter** plusieurs photos pour chaque article (avec possibilité d'ajuster le comptage et le format d'image)
 3. **Exporter** un fichier Excel avec tous les totaux
 """)
 
-# Barre latérale
+# Barre latérale avec la liste des articles
 with st.sidebar:
     st.header("📋 Articles en inventaire")
     
+    # UN SEUL bouton pour importer Excel (toujours visible)
     if st.button("📥 Importer des articles Excel", use_container_width=True):
         st.session_state.show_import = True
         st.rerun()
@@ -696,6 +683,7 @@ with st.sidebar:
     if gestionnaire.articles:
         st.write(f"**{len(gestionnaire.articles)} articles**")
         
+        # Bouton pour nettoyer les articles mal importés
         if st.button("🧹 Nettoyer les articles mal importés", use_container_width=True):
             nb_supprimes = gestionnaire.nettoyer_articles_mal_importes()
             if nb_supprimes > 0:
@@ -704,6 +692,7 @@ with st.sidebar:
             else:
                 st.info("Aucun article à nettoyer")
         
+        # ---- Champ de recherche ----
         search_query = st.text_input(
             "🔍 Rechercher un article",
             value=st.session_state.search_query,
@@ -712,6 +701,7 @@ with st.sidebar:
         ).lower().strip()
         st.session_state.search_query = search_query
         
+        # Filtrer les articles
         codes_filtres = []
         if search_query:
             for code, data in gestionnaire.articles.items():
@@ -729,6 +719,7 @@ with st.sidebar:
         if not codes_filtres:
             st.info("Aucun article ne correspond à votre recherche")
         
+        # Afficher les articles filtrés
         for code_article in codes_filtres:
             total = gestionnaire.get_total_article(code_article)
             libelle = gestionnaire.get_libelle_article(code_article)
@@ -744,6 +735,7 @@ with st.sidebar:
                 with col2:
                     st.write(f"**{total}**")
             
+            # Afficher les badges séparément
             if libelle or emplacement:
                 badge_text = ""
                 if libelle:
@@ -758,6 +750,7 @@ with st.sidebar:
         
         st.divider()
         
+        # Bouton pour retourner à la saisie
         if st.button("➕ Nouvel article manuel", use_container_width=True):
             st.session_state.page = "saisie"
             st.session_state.article_selectionne = None
@@ -765,6 +758,7 @@ with st.sidebar:
         
         st.divider()
         
+        # Export Excel
         if gestionnaire.articles:
             st.header("📊 Export")
             excel_file = gestionnaire.generer_excel()
@@ -776,6 +770,7 @@ with st.sidebar:
                 use_container_width=True
             )
             
+            # Réinitialisation
             if st.button("🔄 Tout réinitialiser", type="primary", use_container_width=True):
                 gestionnaire.reinitialiser_tout()
                 st.session_state.page = "saisie"
@@ -789,18 +784,26 @@ if st.session_state.show_import:
     st.markdown("---")
     st.markdown('<div class="import-section">', unsafe_allow_html=True)
     st.header("📥 Importer des articles depuis Excel")
+    st.markdown("""
+    ### Sélectionnez les colonnes correspondantes :
+    Choisissez quelle colonne de votre fichier correspond à chaque information.
+    """)
     
     uploaded_excel = st.file_uploader("Choisir un fichier Excel", type=['xlsx', 'xls'], key="import_excel")
     
     if uploaded_excel:
         try:
+            # Lire le fichier Excel
             df = pd.read_excel(uploaded_excel)
             
+            # Afficher un aperçu du fichier original
             st.subheader("Aperçu du fichier original")
-            st.dataframe(df.head(10))
+            st.dataframe(df.head(10))  # Afficher les 10 premières lignes
             
+            # Sélection des colonnes
             cols = df.columns.tolist()
             
+            # Trouver automatiquement les bonnes colonnes
             default_code_index = 0
             default_libelle_index = 1
             default_emplacement_index = 2
@@ -808,7 +811,7 @@ if st.session_state.show_import:
             for i, col in enumerate(cols):
                 col_lower = col.lower()
                 if 'emplacement' in col_lower:
-                    default_emplacement_index = i + 1
+                    default_emplacement_index = i + 1  # +1 car on a "(Aucune)" en première position
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -818,24 +821,33 @@ if st.session_state.show_import:
             with col3:
                 col_emplacement = st.selectbox("📍 Colonne pour EMPLACEMENT (optionnel)", ["(Aucune)"] + cols, index=default_emplacement_index)
             
-            skip_first = st.checkbox("Ignorer la première ligne (en-têtes)", value=True)
+            # Option pour ignorer la première ligne
+            skip_first = st.checkbox("Ignorer la première ligne (en-têtes)", value=True, 
+                                   help="Cochez cette case si votre fichier contient des en-têtes de colonnes")
             
+            # Afficher un aperçu des données à importer (TOUTES les lignes)
             st.subheader("Aperçu des données à importer :")
             
+            # Aperçu en ignorant ou non la première ligne
             start_preview = 1 if skip_first else 0
             preview_data = {}
             
+            # Code - prendre toutes les lignes
             preview_data['Code'] = df[col_code].iloc[start_preview:].values
             
+            # Libellé
             if col_libelle != "(Aucune)":
                 preview_data['Libellé'] = df[col_libelle].iloc[start_preview:].values
             
+            # Emplacement
             if col_emplacement != "(Aucune)":
                 preview_data['Emplacement'] = df[col_emplacement].iloc[start_preview:].values
             
+            # Créer le DataFrame d'aperçu
             apercu = pd.DataFrame(preview_data)
             st.dataframe(apercu)
             
+            # Statistiques détaillées
             total_lignes = len(df) - (1 if skip_first else 0)
             codes_non_vides = df[col_code].iloc[start_preview:].notna().sum()
             codes_uniques = df[col_code].iloc[start_preview:].nunique()
@@ -850,13 +862,16 @@ if st.session_state.show_import:
             with col_s4:
                 st.metric("📝 Articles actuels", len(gestionnaire.articles))
             
+            # Bouton d'import
             if st.button("✅ Confirmer l'import", use_container_width=True, type="primary"):
                 with st.spinner("Import en cours..."):
+                    # Convertir "(Aucune)" en None
                     col_lib = col_libelle if col_libelle != "(Aucune)" else None
                     col_emp = col_emplacement if col_emplacement != "(Aucune)" else None
                     
                     importes, existants, erreurs = gestionnaire.importer_articles_excel(df, col_code, col_lib, col_emp, skip_first)
                     
+                    # Afficher le résultat
                     st.markdown("---")
                     st.subheader("📊 Résultat de l'import")
                     
@@ -873,14 +888,20 @@ if st.session_state.show_import:
                     if importes > 0:
                         st.success(f"✅ {importes} articles importés avec succès !")
                         st.balloons()
+                        
+                        # FERMER AUTOMATIQUEMENT l'import
                         st.session_state.show_import = False
                         st.rerun()
                     else:
-                        st.warning("⚠️ Aucun article n'a été importé.")
+                        st.warning("⚠️ Aucun article n'a été importé. Vérifiez que :")
+                        st.warning("   - La colonne CODE contient bien des valeurs")
+                        st.warning("   - Les codes ne sont pas déjà dans l'inventaire")
+                        st.warning("   - Vous avez bien sélectionné les bonnes colonnes")
         
         except Exception as e:
             st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
     
+    # Bouton pour fermer manuellement
     if st.button("❌ Fermer l'import", use_container_width=True):
         st.session_state.show_import = False
         st.rerun()
@@ -890,9 +911,13 @@ if st.session_state.show_import:
 
 # Contenu principal
 if st.session_state.page == "saisie" and not st.session_state.show_import:
+    # Page de saisie d'un nouvel article (sans scan)
     st.header("➕ Ajouter un nouvel article")
+    
+    # Formulaire de saisie manuelle
     st.markdown("### 📝 Informations de l'article")
     
+    # Trois colonnes pour le code, le libellé et l'emplacement
     col_code, col_lib, col_emp = st.columns([2, 2, 1])
     
     with col_code:
@@ -926,6 +951,10 @@ if st.session_state.page == "saisie" and not st.session_state.show_import:
             if code_article:
                 if gestionnaire.creer_nouvel_article(code_article, libelle, emplacement):
                     st.success(f"✅ Article '{code_article}' créé avec succès!")
+                    if libelle:
+                        st.info(f"📝 Libellé: {libelle}")
+                    if emplacement:
+                        st.info(f"📍 Emplacement: {emplacement}")
                     st.session_state.article_selectionne = code_article
                     st.session_state.page = "details"
                     st.rerun()
@@ -941,12 +970,14 @@ if st.session_state.page == "saisie" and not st.session_state.show_import:
             st.rerun()
 
 elif st.session_state.page == "details" and st.session_state.article_selectionne:
+    # Page de détails d'un article
     code_article = st.session_state.article_selectionne
     photos = gestionnaire.get_photos_article(code_article)
     total = gestionnaire.get_total_article(code_article)
     libelle = gestionnaire.get_libelle_article(code_article)
     emplacement = gestionnaire.get_emplacement_article(code_article)
     
+    # En-tête avec libellé et emplacement
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1, 1, 1, 1])
     with col_h1:
         st.header(f"📦 {code_article}")
@@ -965,9 +996,11 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         if emplacement:
             st.metric("Emplacement", emplacement)
     
+    # Afficher un badge si le code est un code-barres (juste pour info)
     if re.match(r'^[A-Z0-9-]+$', code_article):
         st.info(f"🔖 Code produit: {code_article}")
     
+    # Options
     col_o1, col_o2, col_o3 = st.columns(3)
     with col_o1:
         if st.button("⬅️ Retour à la saisie", use_container_width=True):
@@ -987,20 +1020,9 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
     
     st.divider()
     
-    # Ajout de photo avec YOLO
+    # Ajout de photo avec options de calcul et choix du format
     if st.session_state.get('ajout_photo', False):
         st.subheader("📸 Ajouter une photo")
-        
-        # Paramètres YOLO
-        with st.expander("⚙️ Paramètres YOLO", expanded=True):
-            col_y1, col_y2 = st.columns(2)
-            with col_y1:
-                conf_threshold = st.slider(
-                    "Seuil de confiance", 0.1, 0.9, 0.25, 0.05,
-                    help="Plus bas = plus de détections (mais plus de faux positifs)"
-                )
-            with col_y2:
-                st.info(f"Modèle: YOLOv8 nano")
         
         col_p1, col_p2 = st.columns([2, 1])
         with col_p2:
@@ -1012,96 +1034,113 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         with col_p1:
             source = st.radio("Source", ["📸 Prendre une photo", "🖼️ Choisir une image"], horizontal=True, key="photo_source")
         
+        # Gestion de la capture/upload
         img_file = None
         if source == "📸 Prendre une photo":
             img_file = st.camera_input("Prendre une photo", key="camera_photo")
         else:
             img_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png'], key="upload_photo")
         
+        # Si une nouvelle image est fournie, on la stocke brute (sans recadrage) dans photo_temp
         if img_file is not None:
             with st.spinner("Chargement de l'image..."):
                 bytes_data = img_file.getvalue()
                 frame_brut = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 st.session_state.photo_temp = {
                     'brut': frame_brut,
-                    'format_choisi': "Original",
+                    'format_choisi': "Original",  # valeur par défaut
                     'recadree': None,
                     'analyse': None,
                     'detected': 0
                 }
         
+        # Si des données temporaires existent, on propose les options
         if st.session_state.photo_temp is not None:
             temp = st.session_state.photo_temp
             frame_brut = temp['brut']
             
+            # Choix du format
             format_options = ["Original", "4:3", "16:9"]
             index_defaut = format_options.index(temp.get('format_choisi', "Original"))
             format_choisi = st.selectbox("Format d'image", format_options, index=index_defaut, key="format_select")
             
-            # Bouton pour analyser/réanalyser
-            if st.button("🔍 Analyser avec YOLO", use_container_width=True):
-                with st.spinner("Analyse YOLO en cours..."):
-                    if format_choisi == "4:3":
-                        frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
-                    elif format_choisi == "16:9":
-                        frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
-                    else:
-                        frame_recadree = frame_brut
-                    
-                    temp['recadree'] = frame_recadree
-                    temp['format_choisi'] = format_choisi
-                    
-                    resultat, nb = detecter_pieces(frame_recadree, yolo_model, conf_threshold)
-                    temp['analyse'] = resultat
-                    temp['detected'] = nb
-                    st.rerun()
+            # Si le format a changé, on met à jour et on réanalyse
+            if format_choisi != temp.get('format_choisi'):
+                temp['format_choisi'] = format_choisi
+                # Appliquer le recadrage selon le format
+                if format_choisi == "4:3":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
+                elif format_choisi == "16:9":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
+                else:
+                    frame_recadree = frame_brut
+                temp['recadree'] = frame_recadree
+                # Analyser l'image recadrée
+                resultat, nb = detecter_pieces(frame_recadree)
+                temp['analyse'] = resultat
+                temp['detected'] = nb
             
-            if temp.get('analyse') is not None:
-                st.image(cv2.cvtColor(temp['analyse'], cv2.COLOR_BGR2RGB), 
-                         caption=f"Analyse YOLO - {temp['detected']} pièces détectées", 
-                         use_container_width=True)
-                
-                st.markdown("### Options de comptage")
-                col_opt1, col_opt2, col_opt3 = st.columns(3)
-                
-                with col_opt1:
-                    operation = st.selectbox("Opération", 
-                                             ["Utiliser détection", "Remplacer", "Additionner", "Multiplier"],
-                                             index=0)
-                with col_opt2:
-                    manuel = st.number_input("Valeur manuelle", min_value=0, value=0, step=1)
-                with col_opt3:
-                    st.write("")
-                    st.write("")
-                    if st.button("✅ Ajouter cette photo", use_container_width=True):
-                        detected = temp['detected']
-                        if operation == "Utiliser détection":
-                            nb_final = detected
-                        elif operation == "Remplacer":
-                            nb_final = manuel if manuel > 0 else detected
-                        elif operation == "Additionner":
-                            nb_final = detected + manuel
-                        elif operation == "Multiplier":
-                            nb_final = detected * manuel if manuel > 0 else detected
-                        else:
-                            nb_final = detected
-                        
-                        if gestionnaire.ajouter_photo_article(code_article, temp['recadree'], temp['analyse'], nb_final):
-                            st.success(f"✅ Photo ajoutée avec {nb_final} pièces!")
-                            st.session_state.ajout_photo = False
-                            st.session_state.photo_temp = None
-                            st.rerun()
-            else:
-                st.info("👆 Cliquez sur 'Analyser avec YOLO' pour détecter les pièces")
+            # Si l'analyse n'a pas encore été faite (premier affichage après chargement)
+            if temp.get('analyse') is None:
+                if format_choisi == "4:3":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 4/3)
+                elif format_choisi == "16:9":
+                    frame_recadree = recadrer_selon_ratio(frame_brut, 16/9)
+                else:
+                    frame_recadree = frame_brut
+                temp['recadree'] = frame_recadree
+                resultat, nb = detecter_pieces(frame_recadree)
+                temp['analyse'] = resultat
+                temp['detected'] = nb
+            
+            # Afficher l'image analysée
+            st.image(cv2.cvtColor(temp['analyse'], cv2.COLOR_BGR2RGB), 
+                     caption=f"Analyse - {temp['detected']} pièces détectées", use_container_width=True)
+            
+            st.markdown("### Options de comptage")
+            col_opt1, col_opt2, col_opt3 = st.columns(3)
+            
+            with col_opt1:
+                operation = st.selectbox("Opération", 
+                                         ["Utiliser détection", "Remplacer", "Additionner", "Multiplier"],
+                                         index=0)
+            with col_opt2:
+                manuel = st.number_input("Valeur manuelle", min_value=0, value=0, step=1)
+            with col_opt3:
+                st.write("")  # espace
+                st.write("")  # espace
+                if st.button("✅ Ajouter cette photo", use_container_width=True):
+                    # Calcul du nombre final selon l'opération
+                    detected = temp['detected']
+                    if operation == "Utiliser détection":
+                        nb_final = detected
+                    elif operation == "Remplacer":
+                        nb_final = manuel if manuel > 0 else detected
+                    elif operation == "Additionner":
+                        nb_final = detected + manuel
+                    elif operation == "Multiplier":
+                        nb_final = detected * manuel if manuel > 0 else detected
+                    else:
+                        nb_final = detected
+                    
+                    # Ajouter la photo avec le nombre calculé
+                    # On sauvegarde l'image recadrée (originale) et l'analyse
+                    if gestionnaire.ajouter_photo_article(code_article, temp['recadree'], temp['analyse'], nb_final):
+                        st.success(f"✅ Photo ajoutée avec {nb_final} pièces!")
+                        st.session_state.ajout_photo = False
+                        st.session_state.photo_temp = None
+                        st.rerun()
     
     # Affichage des photos existantes
     if photos:
         st.subheader("📸 Photos enregistrées")
         
+        # Options d'affichage
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             tri = st.selectbox("Trier par", ["Plus récente", "Plus ancienne", "Plus de pièces", "Moins de pièces"])
         
+        # Trier les photos
         photos_affichees = photos.copy()
         if tri == "Plus récente":
             photos_affichees = list(reversed(photos_affichees))
@@ -1112,16 +1151,20 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
         elif tri == "Moins de pièces":
             photos_affichees = sorted(photos_affichees, key=lambda x: x['nb_pieces'])
         
+        # Afficher les photos en grille
         cols = st.columns(3)
         for i, photo in enumerate(photos_affichees):
             with cols[i % 3]:
+                # Afficher la miniature
                 img = base64_to_image(photo['image_analyse'])
                 img_mini = cv2.resize(img, (200, 150))
                 st.image(cv2.cvtColor(img_mini, cv2.COLOR_BGR2RGB), use_column_width=True)
                 
+                # Informations
                 st.caption(f"📅 {photo['timestamp'][:10]}")
                 st.caption(f"🔢 {photo['nb_pieces']} pièces")
                 
+                # Boutons
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
                     if st.button("🔍 Voir", key=f"view_{code_article}_{i}"):
@@ -1132,10 +1175,12 @@ elif st.session_state.page == "details" and st.session_state.article_selectionne
                     if st.button("🗑️", key=f"del_{code_article}_{i}"):
                         if gestionnaire.supprimer_photo(code_article, photo['id']):
                             st.rerun()
+    
     else:
         st.info("📸 Aucune photo pour cet article. Cliquez sur 'Ajouter une photo' pour commencer.")
 
 elif st.session_state.page == "photo_detail" and st.session_state.article_selectionne and st.session_state.photo_selectionnee is not None:
+    # Détail d'une photo spécifique
     code_article = st.session_state.article_selectionne
     photos = gestionnaire.get_photos_article(code_article)
     photo_id = st.session_state.photo_selectionnee
@@ -1148,6 +1193,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
         if libelle:
             st.subheader(libelle)
         
+        # Afficher les deux images
         col_img1, col_img2 = st.columns(2)
         
         with col_img1:
@@ -1156,13 +1202,15 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.image(cv2.cvtColor(img_originale, cv2.COLOR_BGR2RGB), use_column_width=True)
         
         with col_img2:
-            st.subheader(f"🔍 Analyse YOLO - {photo['nb_pieces']} pièces")
+            st.subheader(f"🔍 Analyse - {photo['nb_pieces']} pièces")
             img_analyse = base64_to_image(photo['image_analyse'])
             st.image(cv2.cvtColor(img_analyse, cv2.COLOR_BGR2RGB), use_column_width=True)
         
+        # Informations
         st.metric("Nombre de pièces", photo['nb_pieces'])
         st.caption(f"Date: {photo['timestamp']}")
         
+        # Boutons
         col_b1, col_b2 = st.columns(2)
         with col_b1:
             if st.button("⬅️ Retour à l'article", use_container_width=True):
@@ -1182,7 +1230,7 @@ elif st.session_state.page == "photo_detail" and st.session_state.article_select
             st.session_state.photo_selectionnee = None
             st.rerun()
 
-# Pied de page
+# Pied de page (modifié)
 st.markdown("---")
 col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
 with col_f1:
@@ -1198,4 +1246,3 @@ with col_f4:
 with col_f5:
     libelles_renseignes = sum(1 for l in gestionnaire.get_tous_libelles().values() if l)
     st.caption(f"📝 Libellés: {libelles_renseignes}/{len(gestionnaire.articles)}")
-    st.caption("🤖 YOLOv8 activé")
