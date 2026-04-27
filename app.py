@@ -21,131 +21,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==================== Fonction de détection des pièces ====================
-
-def detecter_pieces(image):
-    import cv2
-    import numpy as np
-
-    # Copie pour affichage
-    resultat = image.copy()
-
-    # =============================
-    # 1. Prétraitement
-    # =============================
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    # =============================
-    # 2. Binarisation (fond LED)
-    # =============================
-    _, thresh = cv2.threshold(
-        blur, 0, 255,
-        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
-
-    # =============================
-    # 3. Nettoyage du bruit
-    # =============================
-    kernel = np.ones((3, 3), np.uint8)
-    opening = cv2.morphologyEx(
-        thresh, cv2.MORPH_OPEN, kernel, iterations=2
-    )
-
-    # =============================
-    # 4. Fond sûr
-    # =============================
-    sure_bg = cv2.dilate(opening, kernel, iterations=3)
-
-    # =============================
-    # 5. Distance transform
-    # =============================
-    dist_transform = cv2.distanceTransform(
-        opening, cv2.DIST_L2, 5
-    )
-
-    # =============================
-    # 6. Séparation objets collés
-    # =============================
-    _, sure_fg = cv2.threshold(
-        dist_transform,
-        0.6 * dist_transform.max(),  # 🔧 Ajuster si besoin (0.5 → 0.7)
-        255,
-        0
-    )
-
-    # =============================
-    # 7. Zones inconnues
-    # =============================
-    sure_fg = np.uint8(sure_fg)
-    unknown = cv2.subtract(sure_bg, sure_fg)
-
-    # =============================
-    # 8. Marqueurs
-    # =============================
-    _, markers = cv2.connectedComponents(sure_fg)
-    markers = markers + 1
-    markers[unknown == 255] = 0
-
-    # =============================
-    # 9. Watershed
-    # =============================
-    markers = cv2.watershed(image, markers)
-
-    # =============================
-    # 10. Comptage des pièces
-    # =============================
-    nb_pieces = 0
-
-    for marker in np.unique(markers):
-        if marker <= 1:
-            continue
-
-        mask = np.uint8(markers == marker)
-
-        contours, _ = cv2.findContours(
-            mask,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-
-            # 🔧 Ajuster selon taille des pièces
-            if area > 300:
-                nb_pieces += 1
-
-                # Dessiner contour
-                cv2.drawContours(
-                    resultat, [cnt], -1, (0, 255, 0), 2
-                )
-
-                # Centre
-                M = cv2.moments(cnt)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    cv2.circle(
-                        resultat, (cx, cy),
-                        4, (0, 0, 255), -1
-                    )
-
-    # =============================
-    # 11. Affichage compteur
-    # =============================
-    cv2.putText(
-        resultat,
-        f"Pieces: {nb_pieces}",
-        (10, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1,
-        (0, 0, 255),
-        2
-    )
-
-    return resultat, nb_pieces
-
 # ==================== Fonctions de persistance SQLite ====================
 
 def init_database():
@@ -665,6 +540,55 @@ class GestionnairePieces:
         if os.path.exists('inventaire.db'):
             os.remove('inventaire.db')
         self.articles = {}
+
+# Fonction pour détecter les pièces dans une image
+def detecter_pieces(image):
+    """Détecte et compte les pièces dans une image"""
+    resultat = image.copy()
+    
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Flou pour réduire le bruit
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Détection des contours
+    edges = cv2.Canny(blur, 50, 150)
+    
+    # Dilatation et érosion
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=2)
+    edges = cv2.erode(edges, kernel, iterations=1)
+    
+    # Trouver les contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Filtrer les petits contours (bruit)
+    pieces_valides = []
+    for contour in contours:
+        aire = cv2.contourArea(contour)
+        if aire > 200:  # Seuil minimum
+            pieces_valides.append(contour)
+    
+    nb_pieces = len(pieces_valides)
+    
+    # Dessiner les contours
+    for contour in pieces_valides:
+        # Dessiner le contour en vert
+        cv2.drawContours(resultat, [contour], -1, (0, 255, 0), 2)
+        
+        # Ajouter un point au centre
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            cv2.circle(resultat, (cx, cy), 3, (0, 0, 255), -1)
+    
+    # Ajouter le compteur
+    cv2.putText(resultat, f"Pieces: {nb_pieces}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    
+    return resultat, nb_pieces
 
 # Fonction pour recadrer l'image selon un ratio donné (largeur/hauteur)
 def recadrer_selon_ratio(image, ratio):
